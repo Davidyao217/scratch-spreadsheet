@@ -6,6 +6,7 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
+  outputDir: 'test-results/artifacts',
   reporter: [['html', { outputFolder: 'test-results/playwright-report' }]],
   use: {
     baseURL: 'http://localhost:5173',
