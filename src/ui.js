@@ -1,4 +1,4 @@
-import { colName, mid } from './parser.js';
+import { colName, mid, parseId } from './parser.js';
 
 export function initUI(engine) {
   const COLS = 26, ROWS = 50;
@@ -39,6 +39,10 @@ export function initUI(engine) {
   rb.id = 'rb';
   grid.appendChild(rb);
 
+  const frb = document.createElement('div');
+  frb.id = 'frb';
+  grid.appendChild(frb);
+
   function updateGridTemplate() {
     grid.style.gridTemplateColumns = '40px ' + colWidths.map(w => w + 'px').join(' ');
     grid.style.gridTemplateRows = 'auto ' + rowHeights.map(h => h + 'px').join(' ');
@@ -54,6 +58,7 @@ export function initUI(engine) {
     }
     grid.innerHTML = h;
     grid.appendChild(rb);
+    grid.appendChild(frb);
     for (const el of grid.querySelectorAll('.cv')) inp[el.id.slice(1)] = el;
     updateGridTemplate();
   }
@@ -70,7 +75,7 @@ export function initUI(engine) {
     inp[ni].classList.add('sel');
     inp[ni].scrollIntoView({ block: 'nearest', inline: 'nearest' });
     aci.textContent = ni;
-    fb.value = engine.getData()[ni] || '';
+    fb.value = engine.getData()[ni] ?? '';
   }
 
   function highlightRange() {
@@ -117,7 +122,7 @@ export function initUI(engine) {
     editor.style.width = (r.width + 2) + 'px';
     editor.style.height = (r.height + 2) + 'px';
     editor.style.display = 'block';
-    editor.value = initial !== undefined ? initial : (engine.getData()[i] || '');
+    editor.value = initial !== undefined ? initial : (engine.getData()[i] ?? '');
     editing = true;
     editor.focus();
     const len = editor.value.length;
@@ -174,10 +179,20 @@ export function initUI(engine) {
     for (let c = minC; c <= maxC; c++)
       for (let r = minR; r <= maxR; r++)
         inp[mid(c, r)]?.classList.add('formula-ref');
+    
+    const tl = inp[mid(minC, minR)], br = inp[mid(maxC, maxR)];
+    if (tl && br) {
+      frb.style.left = tl.offsetLeft + 'px';
+      frb.style.top = tl.offsetTop + 'px';
+      frb.style.width = (br.offsetLeft + br.offsetWidth - tl.offsetLeft) + 'px';
+      frb.style.height = (br.offsetTop + br.offsetHeight - tl.offsetTop) + 'px';
+      frb.style.display = 'block';
+    }
   }
 
   function clearFormulaHighlight() {
     for (const id in inp) inp[id].classList.remove('formula-ref');
+    frb.style.display = 'none';
   }
 
   // Subscribe to engine updates
@@ -221,7 +236,7 @@ export function initUI(engine) {
     const t = e.target.closest('.cv');
     if (!t) return;
     const id = t.id.slice(1);
-    const c = id.charCodeAt(0) - 65, r = +id.slice(1);
+    const [c, r] = parseId(id);
 
     // Formula range selection: insert cell ref instead of navigating
     const activeInput = editing ? editor : (document.activeElement === fb ? fb : null);
@@ -244,7 +259,7 @@ export function initUI(engine) {
       sc = c; sr = r;
       const ni = mid(c, r);
       aci.textContent = ni;
-      fb.value = engine.getData()[ni] || '';
+      fb.value = engine.getData()[ni] ?? '';
       highlightRange();
     } else {
       selectCell(c, r);
@@ -271,7 +286,7 @@ export function initUI(engine) {
       const t = document.elementFromPoint(e.clientX, e.clientY)?.closest('.cv');
       if (!t) return;
       const id = t.id.slice(1);
-      const c = id.charCodeAt(0) - 65, r = +id.slice(1);
+      const [c, r] = parseId(id);
       insertFormulaRef(buildRangeRef(formulaDragAnchorCol, formulaDragAnchorRow, c, r));
       highlightFormulaRange(formulaDragAnchorCol, formulaDragAnchorRow, c, r);
       return;
@@ -280,8 +295,9 @@ export function initUI(engine) {
     const t = document.elementFromPoint(e.clientX, e.clientY)?.closest('.cv');
     if (!t) return;
     const id = t.id.slice(1);
-    endCol = id.charCodeAt(0) - 65;
-    endRow = +id.slice(1);
+    const [c, r] = parseId(id);
+    endCol = c;
+    endRow = r;
     highlightRange();
   });
 
@@ -330,11 +346,11 @@ export function initUI(engine) {
           for (let c = c1; c <= c2; c++) row.push(cache[mid(c, r)] ?? '');
           out += row.join('\t') + '\n';
         }
-        navigator.clipboard.writeText(out);
+        navigator.clipboard.writeText(out).catch(e => console.error('Clipboard error', e));
       } else {
         // Single Cell Copy (Copies the raw data/formula)
-        const val = engine.getData()[mid(sc, sr)] || '';
-        navigator.clipboard.writeText(val);
+        const val = engine.getData()[mid(sc, sr)] ?? '';
+        navigator.clipboard.writeText(val).catch(e => console.error('Clipboard error', e));
       }
       return;
     }
@@ -360,14 +376,14 @@ export function initUI(engine) {
               engine.setCell(mid(c, r), '');
           clearRange();
           fb.value = '';
-        });
+        }).catch(e => console.error('Clipboard error', e));
       } else {
-        const val = engine.getData()[mid(sc, sr)] || '';
+        const val = engine.getData()[mid(sc, sr)] ?? '';
         navigator.clipboard.writeText(val).then(() => {
           engine.pushHistory();
           engine.setCell(mid(sc, sr), '');
           fb.value = '';
-        });
+        }).catch(e => console.error('Clipboard error', e));
       }
       return;
     }
@@ -375,7 +391,7 @@ export function initUI(engine) {
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'z') {
       if (editing) return;
       e.preventDefault();
-      if (engine.undo()) fb.value = engine.getData()[mid(sc, sr)] || '';
+      if (engine.undo()) fb.value = engine.getData()[mid(sc, sr)] ?? '';
       return;
     }
 
@@ -407,7 +423,7 @@ export function initUI(engine) {
         sc = endCol; sr = endRow;
         inp[mid(sc, sr)]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         aci.textContent = mid(sc, sr);
-        fb.value = engine.getData()[mid(sc, sr)] || '';
+        fb.value = engine.getData()[mid(sc, sr)] ?? '';
         highlightRange();
       } else {
         selectCell(sc + dc, sr + dr);
@@ -451,7 +467,7 @@ export function initUI(engine) {
             engine.setCell(mid(tc, tr), cols[dc]);
         }
       }
-      fb.value = engine.getData()[mid(sc, sr)] || '';
+      fb.value = engine.getData()[mid(sc, sr)] ?? '';
     }
   });
 
@@ -467,8 +483,9 @@ export function initUI(engine) {
     let mr = 0, mc = 0;
     const data = engine.getData(), cache = engine.getCache();
     for (const k in data) if (data[k] !== '') {
-      mc = Math.max(mc, k.charCodeAt(0) - 65);
-      mr = Math.max(mr, +k.slice(1));
+      const [c, r] = parseId(k);
+      mc = Math.max(mc, c);
+      mr = Math.max(mr, r);
     }
     let csv = '';
     for (let r = 1; r <= mr; r++) {

@@ -1,5 +1,21 @@
-export const colName = i => String.fromCharCode(65 + i);
-export const parseId = s => [s.charCodeAt(0) - 65, +s.slice(1)];
+export const colName = i => {
+  let s = '';
+  let n = i;
+  while (n >= 0) {
+    s = String.fromCharCode((n % 26) + 65) + s;
+    n = Math.floor(n / 26) - 1;
+  }
+  return s;
+};
+
+export const parseId = s => {
+  let c = 0, i = 0;
+  while (i < s.length && s[i] >= 'A' && s[i] <= 'Z') {
+    c = c * 26 + (s.charCodeAt(i) - 64);
+    i++;
+  }
+  return [c - 1, +s.slice(i)];
+};
 export const mid = (c, r) => colName(c) + r;
 
 const PREC  = { u: 4, '^': 3, '*': 2, '/': 2, '+': 1, '-': 1 };

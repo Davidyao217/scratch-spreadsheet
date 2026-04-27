@@ -6,3 +6,9 @@ initUI(engine);
 
 // 2. Hydrate the engine with initial data
 engine.initEngine({});
+
+// 3. Prevent accidental data loss on reload/quit
+window.addEventListener('beforeunload', (e) => {
+  e.preventDefault();
+  e.returnValue = '';
+});
