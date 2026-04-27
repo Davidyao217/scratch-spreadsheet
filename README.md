@@ -17,3 +17,9 @@
 ```
 npx vite build
 ```
+
+**command for testing**
+```
+npm run test
+npm run test:e2e
+```
