@@ -107,20 +107,38 @@ document.getElementById('im').addEventListener('click', () => {
     document.getElementById('im-file').click();
 });
 
+const toast = document.getElementById('toast');
+let toastTimer;
+function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
 document.getElementById('im-file').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
     file.text().then(text => {
+        const rows = parseCSV(text);
+        const totalRows = rows.length;
+        const totalCols = Math.max(0, ...rows.map(r => r.length));
         engine.pushHistory();
         engine.clearAllCells();
-        parseCSV(text).forEach((row, ri) => {
+        rows.forEach((row, ri) => {
+            if (ri >= 50) return;
             row.forEach((val, ci) => {
+                if (ci >= 26) return;
                 if (val !== '') engine.setCell(mid(ci, ri + 1), val);
             });
         });
         titleInput.value = file.name.replace(/\.csv$/i, '');
         currentFileId = null;
         markUnsaved();
+        if (totalRows > 50 || totalCols > 26) {
+            const cutRow = Math.min(totalRows, 50), cutCol = Math.min(totalCols, 26);
+            showToast(`CSV cut off at row ${cutRow}, col ${cutCol} (was ${totalRows}×${totalCols})`);
+        }
     });
     e.target.value = '';
 });

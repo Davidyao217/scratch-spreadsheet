@@ -47,4 +47,6 @@ body.row-resizing,body.row-resizing *{cursor:row-resize!important}
 .info-table td:first-child{white-space:nowrap;padding-right:16px}
 .info-table tr:nth-child(even) td{background:#f8fafc}
 .modal-box code{background:#f1f5f9;border-radius:3px;padding:1px 4px;font-family:ui-monospace,monospace;font-size:12px}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#334155;color:#fff;font-size:12px;padding:6px 14px;border-radius:6px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:200}
+#toast.show{opacity:1}
 .modal-box kbd{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:3px;padding:1px 5px;font-family:ui-monospace,monospace;font-size:11px;white-space:nowrap}
