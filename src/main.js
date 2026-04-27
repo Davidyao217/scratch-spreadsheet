@@ -156,7 +156,7 @@ function executeDriveUpload(accessToken) {
     const fileBlob = new Blob([csvContent], { type: 'text/csv' });
 
     const metadata = {
-        name: `${title}.csv`,
+        name: title,
         mimeType: 'application/vnd.google-apps.spreadsheet'
     };
     const metadataBlob = new Blob([JSON.stringify(metadata)], { type: 'application/json' });

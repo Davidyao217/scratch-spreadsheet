@@ -27,6 +27,16 @@ export const getData = () => data;
 export const getCache = () => cache;
 export const subscribe = (fn) => subscribers.push(fn);
 
+export function getUsedBounds() {
+  let maxCol = 0, maxRow = 0;
+  for (const k in data) if (data[k] !== '') {
+    const [c, r] = parseId(k);
+    if (c > maxCol) maxCol = c;
+    if (r > maxRow) maxRow = r;
+  }
+  return { maxCol, maxRow };
+}
+
 function notify(updates) {
   subscribers.forEach(fn => fn(updates));
 }
@@ -179,7 +189,7 @@ export function initEngine(initial) {
 
 import * as engine from '../src/engine.js';
 import { initUI } from '../src/ui.js';
-import { parseId, mid } from '../src/parser.js';
+import { mid } from '../src/parser.js';
 
 // 1. Initialize the UI and pass it the engine to bind to
 initUI(engine);
@@ -247,26 +257,87 @@ document.getElementById('sv').addEventListener('click', () => {
 });
 
 function generateCSV() {
-    let mr = 0, mc = 0;
-    const data = engine.getData(), cache = engine.getCache();
-    for (const k in data) {
-        if (data[k] !== '') {
-            const [c, r] = parseId(k);
-            mc = Math.max(mc, c);
-            mr = Math.max(mr, r);
-        }
-    }
+    const { maxCol, maxRow } = engine.getUsedBounds();
+    const data = engine.getData();
     let csv = '';
-    for (let r = 1; r <= mr; r++) {
+    for (let r = 1; r <= maxRow; r++) {
         const row = [];
-        for (let c = 0; c <= mc; c++) {
-            const v = cache[mid(c, r)] ?? '';
+        for (let c = 0; c <= maxCol; c++) {
+            const v = data[mid(c, r)] ?? '';
             row.push('"' + String(v).replace(/"/g, '""') + '"');
         }
         csv += row.join(',') + '\n';
     }
     return csv;
 }
+
+function parseCSV(text) {
+    const rows = [];
+    let row = [], field = '', inQuotes = false, i = 0;
+    while (i < text.length) {
+        const ch = text[i];
+        if (inQuotes) {
+            if (ch === '"' && text[i + 1] === '"') { field += '"'; i += 2; }
+            else if (ch === '"') { inQuotes = false; i++; }
+            else { field += ch; i++; }
+        } else {
+            if (ch === '"') { inQuotes = true; i++; }
+            else if (ch === ',') { row.push(field); field = ''; i++; }
+            else if (ch === '\r' && text[i + 1] === '\n') { row.push(field); rows.push(row); row = []; field = ''; i += 2; }
+            else if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; }
+            else { field += ch; i++; }
+        }
+    }
+    if (field || row.length) { row.push(field); rows.push(row); }
+    return rows;
+}
+
+document.getElementById('im').addEventListener('click', () => {
+    document.getElementById('im-file').click();
+});
+
+const toast = document.getElementById('toast');
+let toastTimer;
+function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+document.getElementById('im-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    file.text().then(text => {
+        const rows = parseCSV(text);
+        const totalRows = rows.length;
+        const totalCols = Math.max(0, ...rows.map(r => r.length));
+        engine.pushHistory();
+        engine.clearAllCells();
+        rows.forEach((row, ri) => {
+            if (ri >= 50) return;
+            row.forEach((val, ci) => {
+                if (ci >= 26) return;
+                if (val !== '') engine.setCell(mid(ci, ri + 1), val);
+            });
+        });
+        titleInput.value = file.name.replace(/\.csv$/i, '');
+        currentFileId = null;
+        markUnsaved();
+        if (totalRows > 50 || totalCols > 26) {
+            const cutRow = Math.min(totalRows, 50), cutCol = Math.min(totalCols, 26);
+            showToast(`CSV cut off at row ${cutRow}, col ${cutCol} (was ${totalRows}×${totalCols})`);
+        }
+    });
+    e.target.value = '';
+});
+
+document.getElementById('ex').addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([generateCSV()], { type: 'text/csv' }));
+    a.download = `${titleInput.value.trim() || 'untitled'}.csv`;
+    a.click();
+});
 
 function executeDriveUpload(accessToken) {
     const title = titleInput.value.trim() || 'untitled';
@@ -434,13 +505,13 @@ export function findDeps(rpn) {
 body{height:100vh;display:flex;flex-direction:column;color:var(--t);overflow:hidden}
 header{display:flex;padding:8px 12px;gap:12px;border-bottom:1px solid var(--b);background:var(--bg);align-items:center}
 #aci{font-weight:600;min-width:32px;text-align:center}
-#fb{flex:1;padding:4px 8px;border:1px solid var(--b);border-radius:4px;outline:none}
+#fb{flex:1;height:28px;padding:0 8px;border:1px solid var(--b);border-radius:4px;outline:none;font-size:13px}
 #fb:focus{border-color:var(--s)}
-#file-title{width:150px;padding:4px 8px;border:1px solid var(--b);border-radius:4px;outline:none;font-weight:600;text-align:center}
+#file-title{width:150px;height:28px;padding:0 8px;border:1px solid var(--b);border-radius:4px;outline:none;font-weight:600;text-align:center;font-size:13px}
 #file-title:focus{border-color:var(--s)}
-#info-btn{width:26px;padding:0;font-family:serif;font-style:italic;font-weight:bold;color:#64748b;background:var(--bg)}
-button{padding:4px 12px;background:#fff;border:1px solid var(--b);border-radius:4px;cursor:pointer}
-button:hover{background:#f1f5f9}
+#info-btn{padding:0 9px;font-weight:600;color:#64748b}
+button{height:28px;padding:0 12px;background:#fff;border:1px solid var(--b);border-radius:4px;cursor:pointer;color:#475569;font-size:13px;transition:background .12s,border-color .12s}
+button:hover{background:#f1f5f9;border-color:#b8c1cc}
 button.unsaved{background:#e8f0fe;outline:2px solid var(--s);outline-offset:-2px;border-color:transparent;color:var(--t)}
 #gc{flex:1;overflow:auto;position:relative;outline:none}
 #g{display:grid;width:max-content;contain:layout style}
@@ -463,6 +534,24 @@ body.row-resizing,body.row-resizing *{cursor:row-resize!important}
 #ed{position:absolute;display:none;border:2px solid var(--s);outline:none;padding:0 4px;font:inherit;background:#fff;z-index:10;box-shadow:0 2px 6px rgba(0,0,0,.15);will-change:transform}
 #rb{position:absolute;border:2px solid var(--s);pointer-events:none;display:none;z-index:1}
 #frb{position:absolute;border:2px solid #7c3aed;pointer-events:none;display:none;z-index:1}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal-overlay[hidden]{display:none}
+.modal-box{background:#fff;border-radius:8px;padding:28px 32px;max-width:480px;width:90%;max-height:85vh;overflow-y:auto;position:relative;box-shadow:0 8px 32px rgba(0,0,0,.2)}
+.modal-box h2{font-size:20px;margin-bottom:16px;color:var(--t)}
+.modal-box h3{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin:18px 0 8px}
+.modal-box p{font-size:13px;color:#475569;line-height:1.5}
+.modal-box a{color:var(--s);text-decoration:none}
+.modal-box a:hover{text-decoration:underline}
+.modal-close{position:absolute;top:12px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:#94a3b8;line-height:1;padding:2px 6px}
+.modal-close:hover{color:var(--t);background:none}
+.info-table{width:100%;border-collapse:collapse;font-size:13px}
+.info-table td{padding:4px 6px;vertical-align:top}
+.info-table td:first-child{white-space:nowrap;padding-right:16px}
+.info-table tr:nth-child(even) td{background:#f8fafc}
+.modal-box code{background:#f1f5f9;border-radius:3px;padding:1px 4px;font-family:ui-monospace,monospace;font-size:12px}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#334155;color:#fff;font-size:12px;padding:6px 14px;border-radius:6px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:200}
+#toast.show{opacity:1}
+.modal-box kbd{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:3px;padding:1px 5px;font-family:ui-monospace,monospace;font-size:11px;white-space:nowrap}
 
 --- src/ui.js ---
 
@@ -501,6 +590,7 @@ export function initUI(engine) {
   const fb = document.getElementById('fb');
   const aci = document.getElementById('aci');
   const editor = document.getElementById('ed');
+  const infoModal = document.getElementById('info-modal');
 
   // Range border overlay
   const rb = document.createElement('div');
@@ -550,7 +640,6 @@ export function initUI(engine) {
     for (const id in inp) inp[id].classList.remove('range');
     const c1 = Math.min(anchorCol, endCol), c2 = Math.max(anchorCol, endCol);
     const r1 = Math.min(anchorRow, endRow), r2 = Math.max(anchorRow, endRow);
-    rangeMode = (c1 !== c2 || r1 !== r2);
     if (rangeMode) {
       for (let c = c1; c <= c2; c++)
         for (let r = r1; r <= r2; r++)
@@ -571,6 +660,7 @@ export function initUI(engine) {
   function selectAll() {
     anchorCol = 0; anchorRow = 1;
     endCol = COLS - 1; endRow = ROWS;
+    rangeMode = true;
     highlightRange();
   }
 
@@ -626,6 +716,17 @@ export function initUI(engine) {
   function buildRangeRef(c1, r1, c2, r2) {
     if (c1 === c2 && r1 === r2) return mid(c1, r1);
     return mid(Math.min(c1, c2), Math.min(r1, r2)) + ':' + mid(Math.max(c1, c2), Math.max(r1, r2));
+  }
+
+  function serializeRange(c1, r1, c2, r2) {
+    const cache = engine.getCache();
+    let out = '';
+    for (let r = r1; r <= r2; r++) {
+      const row = [];
+      for (let c = c1; c <= c2; c++) row.push(cache[mid(c, r)] ?? '');
+      out += row.join('\t') + '\n';
+    }
+    return out;
   }
 
   function insertFormulaRef(ref) {
@@ -728,6 +829,7 @@ export function initUI(engine) {
       const ni = mid(c, r);
       aci.textContent = ni;
       fb.value = engine.getData()[ni] ?? '';
+      rangeMode = anchorCol !== endCol || anchorRow !== endRow;
       highlightRange();
     } else {
       selectCell(c, r);
@@ -766,6 +868,7 @@ export function initUI(engine) {
     const [c, r] = parseId(id);
     endCol = c;
     endRow = r;
+    rangeMode = anchorCol !== endCol || anchorRow !== endRow;
     highlightRange();
   });
 
@@ -794,86 +897,86 @@ export function initUI(engine) {
 
   const ARROW_DELTA = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
 
-  document.addEventListener('keydown', e => {
-    if (document.activeElement === fb || document.activeElement.id === 'file-title') return;
-    const k = e.key;
+  function handleHotkey(e) {
+    const k = e.key.toLowerCase();
 
-    // Handle Save (Cmd/Ctrl + S)
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 's') {
+    if (k === 's') {
       e.preventDefault();
       document.getElementById('sv').click();
-      return;
+      return true;
     }
 
-    // Handle Copy (Cmd/Ctrl + C)
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'c') {
-      if (editing) return; // Let native copy work if editing text
+    if (k === 'c') {
+      if (editing) return false;
       e.preventDefault();
-
       if (rangeMode) {
-        // Range Copy
         const c1 = Math.min(anchorCol, endCol), c2 = Math.max(anchorCol, endCol);
         const r1 = Math.min(anchorRow, endRow), r2 = Math.max(anchorRow, endRow);
-        const cache = engine.getCache();
-        let out = '';
-        for (let r = r1; r <= r2; r++) {
-          const row = [];
-          for (let c = c1; c <= c2; c++) row.push(cache[mid(c, r)] ?? '');
-          out += row.join('\t') + '\n';
-        }
-        navigator.clipboard.writeText(out).catch(e => console.error('Clipboard error', e));
+        navigator.clipboard.writeText(serializeRange(c1, r1, c2, r2)).catch(err => console.error('Clipboard error', err));
       } else {
-        // Single Cell Copy (Copies the raw data/formula)
-        const val = engine.getData()[mid(sc, sr)] ?? '';
-        navigator.clipboard.writeText(val).catch(e => console.error('Clipboard error', e));
+        navigator.clipboard.writeText(engine.getData()[mid(sc, sr)] ?? '').catch(err => console.error('Clipboard error', err));
       }
-      return;
+      return true;
     }
 
-    // Handle Cut (Cmd/Ctrl + X)
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'x') {
-      if (editing) return;
+    if (k === 'x') {
+      if (editing) return false;
       e.preventDefault();
       if (rangeMode) {
         const c1 = Math.min(anchorCol, endCol), c2 = Math.max(anchorCol, endCol);
         const r1 = Math.min(anchorRow, endRow), r2 = Math.max(anchorRow, endRow);
-        const cache = engine.getCache();
-        let out = '';
-        for (let r = r1; r <= r2; r++) {
-          const row = [];
-          for (let c = c1; c <= c2; c++) row.push(cache[mid(c, r)] ?? '');
-          out += row.join('\t') + '\n';
-        }
-        navigator.clipboard.writeText(out).then(() => {
+        navigator.clipboard.writeText(serializeRange(c1, r1, c2, r2)).then(() => {
           engine.pushHistory();
           for (let r = r1; r <= r2; r++)
             for (let c = c1; c <= c2; c++)
               engine.setCell(mid(c, r), '');
           clearRange();
           fb.value = '';
-        }).catch(e => console.error('Clipboard error', e));
+        }).catch(err => console.error('Clipboard error', err));
       } else {
-        const val = engine.getData()[mid(sc, sr)] ?? '';
-        navigator.clipboard.writeText(val).then(() => {
+        navigator.clipboard.writeText(engine.getData()[mid(sc, sr)] ?? '').then(() => {
           engine.pushHistory();
           engine.setCell(mid(sc, sr), '');
           fb.value = '';
-        }).catch(e => console.error('Clipboard error', e));
+        }).catch(err => console.error('Clipboard error', err));
       }
-      return;
+      return true;
     }
 
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'z') {
-      if (editing) return;
+    if (k === 'z') {
+      if (editing) return false;
       e.preventDefault();
       if (engine.undo()) fb.value = engine.getData()[mid(sc, sr)] ?? '';
-      return;
+      return true;
     }
 
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'a') {
-      if (editing) return;
-      e.preventDefault(); selectAll(); return;
+    if (k === 'a') {
+      if (editing) return false;
+      e.preventDefault();
+      selectAll();
+      return true;
     }
+
+    if (k === 'i') {
+      e.preventDefault();
+      infoModal.hidden = !infoModal.hidden;
+      if (infoModal.hidden) gc.focus();
+      return true;
+    }
+
+    return false;
+  }
+
+  document.addEventListener('keydown', e => {
+    if (!infoModal.hidden) {
+      if (e.key === 'Escape') { infoModal.hidden = true; gc.focus(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') { e.preventDefault(); infoModal.hidden = true; gc.focus(); }
+      return;
+    }
+    if (document.activeElement === fb || document.activeElement.id === 'file-title') return;
+    const k = e.key;
+
+    if ((e.ctrlKey || e.metaKey) && handleHotkey(e)) return;
 
     if (rangeMode && (k === 'Backspace' || k === 'Delete')) {
       e.preventDefault();
@@ -899,6 +1002,7 @@ export function initUI(engine) {
         inp[mid(sc, sr)]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         aci.textContent = mid(sc, sr);
         fb.value = engine.getData()[mid(sc, sr)] ?? '';
+        rangeMode = anchorCol !== endCol || anchorRow !== endRow;
         highlightRange();
       } else {
         selectCell(sc + dc, sr + dr);
@@ -952,30 +1056,25 @@ export function initUI(engine) {
   fb.addEventListener('input', e => engine.setCell(mid(sc, sr), e.target.value));
   fb.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); gc.focus(); selectCell(sc, sr + 1); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); document.getElementById('sv').click(); }
   });
 
-  document.getElementById('ex').addEventListener('click', () => {
-    let mr = 0, mc = 0;
-    const data = engine.getData(), cache = engine.getCache();
-    for (const k in data) if (data[k] !== '') {
-      const [c, r] = parseId(k);
-      mc = Math.max(mc, c);
-      mr = Math.max(mr, r);
-    }
-    let csv = '';
-    for (let r = 1; r <= mr; r++) {
-      const row = [];
-      for (let c = 0; c <= mc; c++) {
-        const v = cache[mid(c, r)] ?? '';
-        row.push('"' + String(v).replace(/"/g, '""') + '"');
-      }
-      csv += row.join(',') + '\n';
-    }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const title = document.getElementById('file-title').value.trim() || 'untitled';
-    a.download = `${title}.csv`;
-    a.click();
+  document.getElementById('file-title').addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); gc.focus(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); document.getElementById('sv').click(); }
+  });
+
+
+  // Info modal
+  document.getElementById('info-btn').addEventListener('click', () => {
+    infoModal.hidden = false;
+  });
+  document.getElementById('info-close').addEventListener('click', () => {
+    infoModal.hidden = true;
+    gc.focus();
+  });
+  infoModal.addEventListener('click', e => {
+    if (e.target === infoModal) { infoModal.hidden = true; gc.focus(); }
   });
 
   // Boot UI
