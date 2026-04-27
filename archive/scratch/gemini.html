@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>26x50 Spreadsheet</title>
+    <style>
+        :root {
+            --border-color: #c0c0c0;
+            --header-bg: #f3f3f3;
+            --selected-border: #1a73e8;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Formula Bar UI */
+        #formula-bar {
+            display: flex;
+            padding: 10px;
+            background: #fff;
+            border-bottom: 1px solid var(--border-color);
+            align-items: center;
+            gap: 10px;
+        }
+        
+        #active-cell-label {
+            font-weight: bold;
+            width: 40px;
+            text-align: center;
+            color: #555;
+        }
+
+        #formula-input {
+            flex-grow: 1;
+            padding: 5px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+
+        /* The Grid UI */
+        #grid-container {
+            flex-grow: 1;
+            overflow: auto; /* Scrollable viewport */
+        }
+
+        table {
+            border-collapse: collapse;
+            table-layout: fixed; /* Performance optimization for DOM rendering */
+        }
+
+        th, td {
+            border: 1px solid var(--border-color);
+            width: 100px;
+            height: 24px;
+            min-width: 100px;
+            box-sizing: border-box;
+            text-align: left;
+        }
+
+        th {
+            background: var(--header-bg);
+            text-align: center;
+            font-weight: normal;
+            color: #333;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+
+        th.row-header {
+            width: 40px;
+            min-width: 40px;
+            left: 0;
+            z-index: 3; /* Keep top-left corner above others */
+        }
+
+        input.cell-input {
+            width: 100%;
+            height: 100%;
+            border: none;
+            outline: none;
+            padding: 0 4px;
+            font-family: inherit;
+            font-size: 14px;
+            background: transparent;
+        }
+
+        /* The Dual-State UI (Selection vs Edit) */
+        input.cell-input:focus {
+            outline: 2px solid var(--selected-border);
+            outline-offset: -2px;
+            background: #fff;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="formula-bar">
+        <div id="active-cell-label"></div>
+        <input type="text" id="formula-input" placeholder="Enter value or formula (e.g., =A1+B1)" disabled>
+    </div>
+
+    <div id="grid-container">
+        <table id="spreadsheet">
+            <thead id="grid-head"></thead>
+            <tbody id="grid-body"></tbody>
+        </table>
+    </div>
+
+    <script>
+        // --- 1. CONFIGURATION & STATE ---
+        const ROWS = 50;
+        const COLS = 26;
+        
+        // Data Storage: Maps cell ID (e.g., "A1") to its state
+        const state = {}; 
+        
+        // Dependency Graph (DAG): Maps Cell ID to an array of dependent Cell IDs
+        // Example: "A1" -> ["B1", "C2"] means B1 and C2 rely on A1
+        const dependents = {}; 
+
+        let activeCellId = null;
+
+        const formulaInput = document.getElementById('formula-input');
+        const activeCellLabel = document.getElementById('active-cell-label');
+
+        // --- 2. INITIALIZATION ---
+        function initGrid() {
+            const thead = document.getElementById('grid-head');
+            const tbody = document.getElementById('grid-body');
+
+            // Generate Headers
+            let headerRow = '<tr><th class="row-header"></th>';
+            for (let c = 0; c < COLS; c++) {
+                headerRow += `<th>${String.fromCharCode(65 + c)}</th>`;
+            }
+            headerRow += '</tr>';
+            thead.innerHTML = headerRow;
+
+            // Generate 26x50 DOM Nodes
+            for (let r = 1; r <= ROWS; r++) {
+                const tr = document.createElement('tr');
+                let rowHtml = `<th class="row-header">${r}</th>`;
+                
+                for (let c = 0; c < COLS; c++) {
+                    const colLetter = String.fromCharCode(65 + c);
+                    const cellId = `${colLetter}${r}`;
+                    
+                    // Initialize Data Storage for this cell
+                    state[cellId] = { raw: "", computed: "", deps: [] };
+                    dependents[cellId] = [];
+
+                    rowHtml += `<td><input type="text" class="cell-input" id="${cellId}" data-id="${cellId}"></td>`;
+                }
+                tr.innerHTML = rowHtml;
+                tbody.appendChild(tr);
+            }
+
+            attachEventListeners();
+        }
+
+        // --- 3. EVENT HANDLING (Dual-State UI) ---
+        function attachEventListeners() {
+            const inputs = document.querySelectorAll('.cell-input');
+            
+            inputs.forEach(input => {
+                // Focus: Switch to "Selected State"
+                input.addEventListener('focus', (e) => {
+                    activeCellId = e.target.dataset.id;
+                    activeCellLabel.textContent = activeCellId;
+                    formulaInput.disabled = false;
+                    formulaInput.value = state[activeCellId].raw; // Show raw formula in bar
+                    
+                    // Show raw value in the cell while editing
+                    e.target.value = state[activeCellId].raw; 
+                });
+
+                // Blur: Commit Edit and switch to "Computed State"
+                input.addEventListener('blur', (e) => {
+                    commitEdit(activeCellId, e.target.value);
+                });
+
+                // Handle 'Enter' key to save and move down
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.target.blur();
+                        moveFocusDown(activeCellId);
+                    }
+                });
+            });
+
+            // Formula bar syncing
+            formulaInput.addEventListener('input', (e) => {
+                if (activeCellId) {
+                    document.getElementById(activeCellId).value = e.target.value;
+                }
+            });
+            formulaInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    commitEdit(activeCellId, formulaInput.value);
+                    document.getElementById(activeCellId).focus();
+                }
+            });
+        }
+
+        function moveFocusDown(currentId) {
+            const match = currentId.match(/([A-Z])([0-9]+)/);
+            if (match) {
+                const nextRow = parseInt(match[2]) + 1;
+                if (nextRow <= ROWS) {
+                    const nextId = match[1] + nextRow;
+                    document.getElementById(nextId).focus();
+                }
+            }
+        }
+
+        // --- 4. FORMULA ENGINE & DEPENDENCY GRAPH ---
+
+        function commitEdit(cellId, rawValue) {
+            if (state[cellId].raw === rawValue) {
+                // No change, just re-display computed value
+                document.getElementById(cellId).value = state[cellId].computed;
+                return;
+            }
+
+            state[cellId].raw = rawValue;
+
+            // 1. Parse new dependencies
+            const newDeps = extractDependencies(rawValue);
+            
+            // 2. Update DAG (remove old edges, add new edges)
+            state[cellId].deps.forEach(dep => {
+                dependents[dep] = dependents[dep].filter(id => id !== cellId);
+            });
+            state[cellId].deps = newDeps;
+            newDeps.forEach(dep => {
+                if (!dependents[dep]) dependents[dep] = [];
+                if (!dependents[dep].includes(cellId)) dependents[dep].push(cellId);
+            });
+
+            // 3. Evaluate and Propagate changes
+            propagate(cellId);
+        }
+
+        // Lexer Shortcut: Extracts e.g. "A1", "B2" from string "=A1+B2"
+        function extractDependencies(rawValue) {
+            if (!rawValue.startsWith('=')) return [];
+            const matches = rawValue.toUpperCase().match(/[A-Z][1-9][0-9]?/g);
+            return matches ? [...new Set(matches)] : []; // Return unique refs
+        }
+
+        // Graph Traversal: Updates cell and everything that depends on it
+        function propagate(startCellId) {
+            const queue = [startCellId];
+            const visited = new Set(); // For Cycle Detection
+
+            while (queue.length > 0) {
+                const currentId = queue.shift();
+
+                if (visited.has(currentId)) {
+                    state[currentId].computed = "#CYCLE!";
+                    updateDOM(currentId);
+                    continue; 
+                }
+                visited.add(currentId);
+
+                // Recalculate
+                state[currentId].computed = evaluateFormula(state[currentId].raw);
+                updateDOM(currentId);
+
+                // Add dependents to queue
+                if (dependents[currentId]) {
+                    queue.push(...dependents[currentId]);
+                }
+            }
+        }
+
+        // AST/Evaluator Shortcut: Using new Function for the prototype.
+        // In production, this is replaced by a full Pratt parser / AST traverse.
+        function evaluateFormula(raw) {
+            if (!raw.startsWith('=')) return raw; // Not a formula
+
+            let expression = raw.substring(1).toUpperCase();
+            const refs = extractDependencies(raw);
+
+            refs.forEach(ref => {
+                let val = state[ref] ? state[ref].computed : 0;
+                // Coerce empty strings to 0 for math operations
+                if (val === "" || isNaN(val)) val = 0; 
+                
+                // Replace all instances of the cell ID with its computed value
+                expression = expression.replace(new RegExp(ref, 'g'), val);
+            });
+
+            try {
+                // Safely evaluate basic math
+                const result = new Function('return ' + expression)();
+                return isNaN(result) && typeof result !== 'string' ? "#ERROR!" : result;
+            } catch (e) {
+                return "#ERROR!";
+            }
+        }
+
+        function updateDOM(cellId) {
+            const el = document.getElementById(cellId);
+            if (el && activeCellId !== cellId) {
+                el.value = state[cellId].computed;
+            }
+        }
+
+        // --- RUN ---
+        initGrid();
+
+    </script>
+</body>
+</html>

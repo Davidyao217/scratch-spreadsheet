@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sheet Scratchpad</title>
+<style>
+:root{--b:#e2e8f0;--bg:#f8fafc;--s:#1a73e8;--t:#0f172a}
+*{box-sizing:border-box;margin:0;padding:0;font:14px system-ui,sans-serif}
+body{height:100vh;display:flex;flex-direction:column;color:var(--t);overflow:hidden}
+header{display:flex;padding:8px 12px;gap:12px;border-bottom:1px solid var(--b);background:var(--bg);align-items:center}
+#aci{font-weight:600;min-width:32px;text-align:center}
+#fb{flex:1;padding:4px 8px;border:1px solid var(--b);border-radius:4px;outline:none}
+#fb:focus{border-color:var(--s)}
+button{padding:4px 12px;background:#fff;border:1px solid var(--b);border-radius:4px;cursor:pointer}
+button:hover{background:#f1f5f9}
+#gc{flex:1;overflow:auto;position:relative;outline:none}
+#g{display:grid;grid-template-columns:40px repeat(26,80px);width:max-content;contain:layout style}
+.cell{border-right:1px solid var(--b);border-bottom:1px solid var(--b);user-select:none}
+.ch{background:var(--bg);font-weight:600;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:12px;position:sticky;z-index:1}
+.ch.col{top:0;border-bottom:2px solid var(--b)}
+.ch.row{left:0;border-right:2px solid var(--b)}
+.ch.corner{left:0;top:0;z-index:2}
+.cv{padding:0 6px;display:flex;align-items:center;cursor:cell;background:#fff;white-space:nowrap;overflow:hidden;height:24px}
+.cv.sel{outline:2px solid var(--s);outline-offset:-2px;background:#e8f0fe;z-index:0}
+.cv.range{background:#e8f0fe}
+.cv.err{color:#dc2626}
+#ed{position:absolute;display:none;border:2px solid var(--s);outline:none;padding:0 4px;font:inherit;background:#fff;z-index:10;box-shadow:0 2px 6px rgba(0,0,0,.15);will-change:transform}
+</style>
+</head>
+<body>
+<header>
+<div id="aci">A1</div>
+<input id="fb" autocomplete="off" spellcheck="false" placeholder="Value or formula">
+<button id="ex">Export CSV</button>
+</header>
+<div id="gc" tabindex="0">
+<div id="g"></div>
+<input id="ed" autocomplete="off" spellcheck="false">
+</div>
+<script>
+(() => {
+'use strict';
+
+// ============================================================
+// PARSER  ——  tokenize, shunting-yard, dependency extraction.
+// Pure functions. No state, no DOM. (Could live in parser.js.)
+// ============================================================
+
+const colName = i => String.fromCharCode(65 + i);
+const parseId = s => [s.charCodeAt(0) - 65, +s.slice(1)];
+const mid = (c, r) => colName(c) + r;
+
+const PREC  = { u: 4, '^': 3, '*': 2, '/': 2, '+': 1, '-': 1 };
+const RIGHT = { '^': 1, u: 1 };
+
+function tokenize(s) {
+  const t = []; let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === ' ' || c === '\t') { i++; continue; }
+    if ((c >= '0' && c <= '9') || c === '.') {
+      let j = i + 1;
+      while (j < s.length && ((s[j] >= '0' && s[j] <= '9') || s[j] === '.')) j++;
+      t.push({ k: 'n', v: +s.slice(i, j) });
+      i = j;
+    } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+      let j = i + 1;
+      while (j < s.length && /[A-Za-z0-9]/.test(s[j])) j++;
+      const w = s.slice(i, j).toUpperCase();
+      i = j;
+      if (/^[A-Z]+\d+$/.test(w)) {
+        if (s[i] === ':') {
+          let k = i + 1;
+          while (k < s.length && /[A-Za-z0-9]/.test(s[k])) k++;
+          t.push({ k: 'r', a: w, b: s.slice(i + 1, k).toUpperCase() });
+          i = k;
+        } else t.push({ k: 'c', v: w });
+      } else t.push({ k: 'f', v: w });
+    } else {
+      const p = t[t.length - 1];
+      if (c === '-' && (!p || (p.k === 'o' && p.v !== ')'))) t.push({ k: 'o', v: 'u' });
+      else if ('+-*/^(),'.indexOf(c) >= 0) t.push({ k: 'o', v: c });
+      else throw new Error('bad char');
+      i++;
+    }
+  }
+  return t;
+}
+
+function parse(toks) {
+  const out = [], ops = [], arity = [];
+  const bumpArity = () => {
+    if (arity.length && arity[arity.length - 1] === 0) arity[arity.length - 1] = 1;
+  };
+  for (const t of toks) {
+    if (t.k === 'n' || t.k === 'c' || t.k === 'r') { out.push(t); bumpArity(); }
+    else if (t.k === 'f') ops.push(t);
+    else if (t.v === '(') {
+      const fn = ops.length && ops[ops.length - 1].k === 'f';
+      ops.push(t);
+      if (fn) arity.push(0);
+    } else if (t.v === ')') {
+      while (ops.length && ops[ops.length - 1].v !== '(') out.push(ops.pop());
+      if (!ops.length) throw new Error('mismatched paren');
+      ops.pop();
+      if (ops.length && ops[ops.length - 1].k === 'f') {
+        const f = ops.pop();
+        out.push({ k: 'f', v: f.v, a: arity.pop() });
+      }
+      bumpArity(); 
+    } else if (t.v === ',') {
+      while (ops.length && ops[ops.length - 1].v !== '(') out.push(ops.pop());
+      if (!arity.length) throw new Error('comma outside fn');
+      arity[arity.length - 1]++;
+    } else { 
+      while (ops.length) {
+        const top = ops[ops.length - 1];
+        if (top.v === '(' || top.k === 'f') break;
+        const tp = PREC[top.v] || 0, cp = PREC[t.v] || 0;
+        if (tp > cp || (tp === cp && !RIGHT[t.v])) out.push(ops.pop());
+        else break;
+      }
+      ops.push(t);
+    }
+  }
+  while (ops.length) {
+    const x = ops.pop();
+    if (x.v === '(') throw new Error('mismatched paren');
+    out.push(x);
+  }
+  return out;
+}
+
+function findDeps(rpn) {
+  const d = new Set();
+  for (const t of rpn) {
+    if (t.k === 'c') d.add(t.v);
+    else if (t.k === 'r') {
+      const [c1, r1] = parseId(t.a), [c2, r2] = parseId(t.b);
+      for (let c = Math.min(c1, c2); c <= Math.max(c1, c2); c++)
+        for (let r = Math.min(r1, r2); r <= Math.max(r1, r2); r++)
+          d.add(mid(c, r));
+    }
+  }
+  return d;
+}
+
+// ============================================================
+// ENGINE  ——  state, dependency graph, reactive recompute.
+// ============================================================
+
+const FN = {
+  SUM: a => a.reduce((s, x) => s + (+x || 0), 0),
+  AVERAGE: a => { const n = a.filter(x => x !== '' && !isNaN(+x)); return n.length ? FN.SUM(n) / n.length : 0; },
+  MIN: a => { const n = a.map(Number).filter(x => !isNaN(x)); return n.length ? Math.min(...n) : 0; },
+  MAX: a => { const n = a.map(Number).filter(x => !isNaN(x)); return n.length ? Math.max(...n) : 0; },
+  COUNT: a => a.filter(x => x !== '' && !isNaN(+x)).length
+};
+
+const data = {};   
+const cache = {};  
+const comp = {};   
+const fwd = {};    
+const rev = {};    
+let onUpdate = () => {};
+
+// History & Undo State
+const history = [];
+function pushHistory() {
+  if (history.length && JSON.stringify(history[history.length - 1]) === JSON.stringify(data)) return;
+  history.push({ ...data });
+}
+
+function undo() {
+  if (!history.length) return;
+  const prev = history.pop();
+  const keys = new Set([...Object.keys(data), ...Object.keys(prev)]);
+  for (const k of keys) delete data[k];
+  Object.assign(data, prev);
+  for (const k of keys) compile(k);
+  recompute([...keys]);
+  fb.value = data[mid(sc, sr)] || '';
+}
+
+function setDeps(id, nd) {
+  const old = fwd[id];
+  if (old) for (const d of old) rev[d] && rev[d].delete(id);
+  fwd[id] = nd;
+  for (const d of nd) (rev[d] = rev[d] || new Set()).add(id);
+}
+
+function compile(id) {
+  const raw = (data[id] || '').toString();
+  let p = null;
+  if (raw[0] === '=') {
+    try {
+      const rpn = parse(tokenize(raw.slice(1)));
+      p = { rpn, deps: findDeps(rpn) };
+    } catch (e) {
+      p = { err: '#ERR!', deps: new Set() };
+    }
+  }
+  comp[id] = p;
+  setDeps(id, p ? p.deps : new Set());
+}
+
+function evalRPN(rpn) {
+  const st = [];
+  for (const t of rpn) {
+    if (t.k === 'n') st.push(t.v);
+    else if (t.k === 'c') {
+      const v = cache[t.v];
+      st.push(v === undefined || v === '' ? 0 : v);
+    } else if (t.k === 'r') {
+      const arr = [], [c1, r1] = parseId(t.a), [c2, r2] = parseId(t.b);
+      for (let c = Math.min(c1, c2); c <= Math.max(c1, c2); c++)
+        for (let r = Math.min(r1, r2); r <= Math.max(r1, r2); r++) {
+          const v = cache[mid(c, r)];
+          arr.push(v === undefined ? '' : v);
+        }
+      st.push(arr);
+    } else if (t.k === 'f') {
+      const args = [];
+      for (let i = 0; i < t.a; i++) args.unshift(st.pop());
+      const flat = [];
+      for (const a of args) Array.isArray(a) ? flat.push(...a) : flat.push(a);
+      if (!FN[t.v]) return '#NAME?';
+      st.push(FN[t.v](flat));
+    } else {
+      if (t.v === 'u') {
+        const a = +st.pop();
+        st.push(isNaN(a) ? NaN : -a);
+      } else {
+        const b = +st.pop(), a = +st.pop();
+        let r;
+        switch (t.v) {
+          case '+': r = a + b; break;
+          case '-': r = a - b; break;
+          case '*': r = a * b; break;
+          case '/': r = b === 0 ? NaN : a / b; break;
+          case '^': r = Math.pow(a, b); break;
+        }
+        st.push(r);
+      }
+    }
+  }
+  const r = st[0];
+  if (typeof r === 'string') return r;
+  if (r === undefined || r === null) return '';
+  return Number.isFinite(r) ? r : '#ERR!';
+}
+
+function evalCell(id) {
+  const c = comp[id];
+  if (!c) {
+    const raw = (data[id] || '').toString().trim();
+    if (raw === '') return '';
+    const n = +raw;
+    return isNaN(n) ? raw : n;
+  }
+  if (c.err) return c.err;
+  return evalRPN(c.rpn);
+}
+
+function recompute(seeds) {
+  const aff = new Set(), stk = [...seeds];
+  while (stk.length) {
+    const x = stk.pop();
+    if (aff.has(x)) continue;
+    aff.add(x);
+    if (rev[x]) for (const d of rev[x]) stk.push(d);
+  }
+  const indeg = {}, adj = {};
+  for (const x of aff) { indeg[x] = 0; adj[x] = []; }
+  for (const x of aff) if (fwd[x]) for (const d of fwd[x]) if (aff.has(d)) {
+    adj[d].push(x); indeg[x]++;
+  }
+  const q = [], order = [];
+  for (const x of aff) if (!indeg[x]) q.push(x);
+  while (q.length) {
+    const x = q.shift(); order.push(x);
+    for (const y of adj[x]) if (--indeg[y] === 0) q.push(y);
+  }
+  const sorted = new Set(order);
+  for (const x of order) cache[x] = evalCell(x);
+  for (const x of aff) if (!sorted.has(x)) cache[x] = '#CIRC!';
+
+  const updates = new Map();
+  for (const x of aff) updates.set(x, cache[x]);
+  onUpdate(updates);
+}
+
+function setCell(id, raw) {
+  data[id] = raw;
+  compile(id);
+  recompute([id]);
+}
+
+function clearAllCells() {
+  pushHistory();
+  const keys = Object.keys(data);
+  for (const k of keys) data[k] = '';
+  for (const k of keys) compile(k);
+  recompute(keys);
+}
+
+function initEngine(initial) {
+  for (const k in initial) data[k] = initial[k];
+  for (const k in data) compile(k);
+  recompute(Object.keys(data));
+}
+
+// ============================================================
+// UI  ——  DOM, selection, edit overlay, keyboard, CSV export.
+// ============================================================
+
+const COLS = 26, ROWS = 50;
+const inp = {};
+let sc = 0, sr = 1;
+let editing = false;
+let rangeMode = false;
+
+const grid = document.getElementById('g');
+const gc = document.getElementById('gc');
+const fb = document.getElementById('fb');
+const aci = document.getElementById('aci');
+const editor = document.getElementById('ed');
+
+function buildGrid() {
+  let h = '<div class="cell ch corner"></div>';
+  for (let c = 0; c < COLS; c++) h += `<div class="cell ch col">${colName(c)}</div>`;
+  for (let r = 1; r <= ROWS; r++) {
+    h += `<div class="cell ch row">${r}</div>`;
+    for (let c = 0; c < COLS; c++) h += `<div class="cell cv" id="x${mid(c, r)}"></div>`;
+  }
+  grid.innerHTML = h;
+  for (const el of grid.querySelectorAll('.cv')) inp[el.id.slice(1)] = el;
+}
+
+function selectCell(c, r) {
+  clearRange();
+  c = Math.max(0, Math.min(c, COLS - 1));
+  r = Math.max(1, Math.min(r, ROWS));
+  const oi = mid(sc, sr), ni = mid(c, r);
+  if (inp[oi]) inp[oi].classList.remove('sel');
+  sc = c; sr = r;
+  inp[ni].classList.add('sel');
+  inp[ni].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  aci.textContent = ni;
+  fb.value = data[ni] || '';
+}
+
+function selectAll() {
+  for (const id in inp) inp[id].classList.add('range');
+  rangeMode = true;
+}
+
+function clearRange() {
+  if (!rangeMode) return;
+  for (const id in inp) inp[id].classList.remove('range');
+  rangeMode = false;
+}
+
+function startEdit(initial) {
+  clearRange();
+  const i = mid(sc, sr), el = inp[i];
+  const r = el.getBoundingClientRect(), gr = gc.getBoundingClientRect();
+  editor.style.transform = `translate(${r.left - gr.left + gc.scrollLeft}px,${r.top - gr.top + gc.scrollTop}px)`;
+  editor.style.top = '0';
+  editor.style.left = '0';
+  editor.style.width = (r.width + 2) + 'px';
+  editor.style.height = (r.height + 2) + 'px';
+  editor.style.display = 'block';
+  editor.value = initial !== undefined ? initial : (data[i] || '');
+  editing = true;
+  editor.focus();
+  const len = editor.value.length;
+  editor.setSelectionRange(len, len);
+}
+
+function commitEdit() {
+  if (!editing) return;
+  pushHistory();
+  setCell(mid(sc, sr), editor.value);
+  editor.style.display = 'none';
+  editing = false;
+  gc.focus();
+}
+
+function cancelEdit() {
+  if (!editing) return;
+  editor.style.display = 'none';
+  editing = false;
+  gc.focus();
+}
+
+onUpdate = updates => {
+  for (const [id, v] of updates) {
+    const el = inp[id]; if (!el) continue;
+    el.textContent = v === '' ? '' : v;
+    el.classList.toggle('err', typeof v === 'string' && v[0] === '#');
+  }
+};
+
+grid.addEventListener('mousedown', e => {
+  const t = e.target.closest('.cv');
+  if (!t) return;
+  if (editing) commitEdit();
+  const id = t.id.slice(1);
+  selectCell(id.charCodeAt(0) - 65, +id.slice(1));
+});
+
+grid.addEventListener('dblclick', e => {
+  if (e.target.closest('.cv')) startEdit();
+});
+
+const ARROW_DELTA = {
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0]
+};
+
+document.addEventListener('keydown', e => {
+  if (document.activeElement === fb) return;
+  const k = e.key;
+
+  if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'c' && rangeMode) {
+    e.preventDefault();
+    let mr = 1, mc = 0;
+    for (const id in data) if (data[id] !== '') {
+      mc = Math.max(mc, id.charCodeAt(0) - 65);
+      mr = Math.max(mr, +id.slice(1));
+    }
+    let out = '';
+    for (let r = 1; r <= mr; r++) {
+      const row = [];
+      for (let c = 0; c <= mc; c++) row.push(cache[mid(c, r)] ?? '');
+      out += row.join('\t') + '\n';
+    }
+    navigator.clipboard.writeText(out);
+    return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'z') {
+    if (editing) return;
+    e.preventDefault(); undo(); return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'a') {
+    if (editing) return;
+    e.preventDefault(); selectAll(); return;
+  }
+
+  if (rangeMode && (k === 'Backspace' || k === 'Delete')) {
+    e.preventDefault(); clearAllCells(); clearRange(); fb.value = ''; return;
+  }
+
+  if (ARROW_DELTA[k]) {
+    e.preventDefault();
+    const [dc, dr] = ARROW_DELTA[k];
+    if (editing) commitEdit();
+    selectCell(sc + dc, sr + dr);
+    return;
+  }
+
+  if (editing) {
+    if (k === 'Enter') { e.preventDefault(); commitEdit(); selectCell(sc, sr + 1); }
+    else if (k === 'Tab') { e.preventDefault(); commitEdit(); selectCell(sc + 1, sr); }
+    else if (k === 'Escape') { cancelEdit(); }
+    return;
+  }
+
+  if (k === 'Escape') { clearRange(); }
+  else if (k === 'Enter') { e.preventDefault(); startEdit(); }
+  else if (k === 'Tab') { e.preventDefault(); selectCell(sc + 1, sr); }
+  else if (k === 'Backspace' || k === 'Delete') { pushHistory(); setCell(mid(sc, sr), ''); fb.value = ''; }
+  else if (k === 'F2') { e.preventDefault(); startEdit(); }
+  else if (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    startEdit(k); e.preventDefault();
+  }
+});
+
+editor.addEventListener('input', e => { fb.value = e.target.value; });
+
+fb.addEventListener('focus', pushHistory);
+fb.addEventListener('input', e => setCell(mid(sc, sr), e.target.value));
+fb.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); gc.focus(); selectCell(sc, sr + 1); }
+});
+
+document.getElementById('ex').addEventListener('click', () => {
+  let mr = 0, mc = 0;
+  for (const k in data) if (data[k] !== '') {
+    mc = Math.max(mc, k.charCodeAt(0) - 65);
+    mr = Math.max(mr, +k.slice(1));
+  }
+  let csv = '';
+  for (let r = 1; r <= mr; r++) {
+    const row = [];
+    for (let c = 0; c <= mc; c++) {
+      const v = cache[mid(c, r)] ?? '';
+      row.push('"' + String(v).replace(/"/g, '""') + '"');
+    }
+    csv += row.join(',') + '\n';
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'scratchpad.csv';
+  a.click();
+});
+
+// === Boot ===
+buildGrid();
+initEngine({ A1: '100', A2: '250', A3: '=SUM(A1:A2)' });
+selectCell(0, 1);
+gc.focus();
+
+})();
+</script>
+</body>
+</html>

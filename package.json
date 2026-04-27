@@ -1,0 +1,25 @@
+{
+  "name": "scratch_spreadsheet",
+  "version": "1.0.0",
+  "description": "**What:** Browser-based spreadsheet for quick arithmetic scratchwork. The analog is `text.new` — you type a short URL and you're immediately editing. No auth, no onboarding, no server.",
+  "main": "vite.config.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Davidyao217/scratch-spreadsheet.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Davidyao217/scratch-spreadsheet/issues"
+  },
+  "homepage": "https://github.com/Davidyao217/scratch-spreadsheet#readme",
+  "devDependencies": {
+    "vite": "^8.0.10",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
