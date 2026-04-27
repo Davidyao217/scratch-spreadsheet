@@ -499,10 +499,12 @@ export function initUI(engine) {
   fb.addEventListener('input', e => engine.setCell(mid(sc, sr), e.target.value));
   fb.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); gc.focus(); selectCell(sc, sr + 1); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); document.getElementById('sv').click(); }
   });
 
   document.getElementById('file-title').addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); gc.focus(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); document.getElementById('sv').click(); }
   });
 
 
