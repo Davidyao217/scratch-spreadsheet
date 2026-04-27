@@ -23,6 +23,16 @@ export const getData = () => data;
 export const getCache = () => cache;
 export const subscribe = (fn) => subscribers.push(fn);
 
+export function getUsedBounds() {
+  let maxCol = 0, maxRow = 0;
+  for (const k in data) if (data[k] !== '') {
+    const [c, r] = parseId(k);
+    if (c > maxCol) maxCol = c;
+    if (r > maxRow) maxRow = r;
+  }
+  return { maxCol, maxRow };
+}
+
 function notify(updates) {
   subscribers.forEach(fn => fn(updates));
 }

@@ -1,6 +1,6 @@
 import * as engine from '../src/engine.js';
 import { initUI } from '../src/ui.js';
-import { parseId, mid } from '../src/parser.js';
+import { mid } from '../src/parser.js';
 
 // 1. Initialize the UI and pass it the engine to bind to
 initUI(engine);
@@ -68,26 +68,26 @@ document.getElementById('sv').addEventListener('click', () => {
 });
 
 function generateCSV() {
-    let mr = 0, mc = 0;
-    const data = engine.getData(), cache = engine.getCache();
-    for (const k in data) {
-        if (data[k] !== '') {
-            const [c, r] = parseId(k);
-            mc = Math.max(mc, c);
-            mr = Math.max(mr, r);
-        }
-    }
+    const { maxCol, maxRow } = engine.getUsedBounds();
+    const data = engine.getData();
     let csv = '';
-    for (let r = 1; r <= mr; r++) {
+    for (let r = 1; r <= maxRow; r++) {
         const row = [];
-        for (let c = 0; c <= mc; c++) {
-            const v = cache[mid(c, r)] ?? '';
+        for (let c = 0; c <= maxCol; c++) {
+            const v = data[mid(c, r)] ?? '';
             row.push('"' + String(v).replace(/"/g, '""') + '"');
         }
         csv += row.join(',') + '\n';
     }
     return csv;
 }
+
+document.getElementById('ex').addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([generateCSV()], { type: 'text/csv' }));
+    a.download = `${titleInput.value.trim() || 'untitled'}.csv`;
+    a.click();
+});
 
 function executeDriveUpload(accessToken) {
     const title = titleInput.value.trim() || 'untitled';

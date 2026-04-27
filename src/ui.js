@@ -505,29 +505,6 @@ export function initUI(engine) {
     if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); gc.focus(); }
   });
 
-  document.getElementById('ex').addEventListener('click', () => {
-    let mr = 0, mc = 0;
-    const data = engine.getData(), cache = engine.getCache();
-    for (const k in data) if (data[k] !== '') {
-      const [c, r] = parseId(k);
-      mc = Math.max(mc, c);
-      mr = Math.max(mr, r);
-    }
-    let csv = '';
-    for (let r = 1; r <= mr; r++) {
-      const row = [];
-      for (let c = 0; c <= mc; c++) {
-        const v = cache[mid(c, r)] ?? '';
-        row.push('"' + String(v).replace(/"/g, '""') + '"');
-      }
-      csv += row.join(',') + '\n';
-    }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const title = document.getElementById('file-title').value.trim() || 'untitled';
-    a.download = `${title}.csv`;
-    a.click();
-  });
 
   // Info modal
   document.getElementById('info-btn').addEventListener('click', () => {
