@@ -503,7 +503,7 @@ export function initUI(engine) {
   });
 
   document.getElementById('file-title').addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); gc.focus(); }
+    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); gc.focus(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); document.getElementById('sv').click(); }
   });
 

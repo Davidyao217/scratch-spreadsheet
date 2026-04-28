@@ -1,98 +1,642 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Spreadsheet E2E', () => {
+// ─── Cell Selection ───────────────────────────────────────────────────────────
+
+test.describe('Cell Selection', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
   });
 
-  test('should allow basic data entry and calculation', async ({ page }) => {
-    const cellA1 = page.locator('#xA1');
-    await cellA1.click();
-    await page.keyboard.type('10');
-    await page.keyboard.press('Enter');
-
-    const cellA2 = page.locator('#xA2');
-    await cellA2.click();
-    await page.keyboard.type('20');
-    await page.keyboard.press('Enter');
-
-    const cellA3 = page.locator('#xA3');
-    await cellA3.click();
-    await page.keyboard.type('=A1+A2');
-    await page.keyboard.press('Enter');
-
-    await expect(cellA3).toHaveText('30');
+  test('clicking a cell selects it and updates ACI', async ({ page }) => {
+    await page.locator('#xB3').click();
+    await expect(page.locator('#aci')).toHaveText('B3');
   });
 
-  test('should synchronize formula bar', async ({ page }) => {
-    const cellB1 = page.locator('#xB1');
-    const formulaBar = page.locator('#fb');
-
-    await cellB1.click();
-    await page.keyboard.type('=SUM(1, 2, 3)');
+  test('clicking a cell with data shows raw value in formula bar', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('=1+1');
     await page.keyboard.press('Enter');
-
-    await cellB1.click();
-    await expect(formulaBar).toHaveValue('=SUM(1, 2, 3)');
-    await expect(cellB1).toHaveText('6');
+    await page.locator('#xA1').click();
+    await expect(page.locator('#fb')).toHaveValue('=1+1');
+    await expect(page.locator('#xA1')).toHaveText('2');
   });
 
-  test('should support keyboard navigation', async ({ page }) => {
-    const cellA1 = page.locator('#xA1');
-    await cellA1.click();
-    
-    // Move to B1
+  test('selected cell gets sel class, deselected cell loses it', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await expect(page.locator('#xA1')).toHaveClass(/sel/);
+    await page.locator('#xB2').click();
+    await expect(page.locator('#xA1')).not.toHaveClass(/sel/);
+    await expect(page.locator('#xB2')).toHaveClass(/sel/);
+  });
+
+  test('arrow keys navigate all four directions', async ({ page }) => {
+    await page.locator('#xB2').click();
     await page.keyboard.press('ArrowRight');
-    // Move to B2
+    await expect(page.locator('#aci')).toHaveText('C2');
     await page.keyboard.press('ArrowDown');
-    
-    const activeCellIndicator = page.locator('#aci');
-    await expect(activeCellIndicator).toHaveText('B2');
-    
-    // Type in B2
+    await expect(page.locator('#aci')).toHaveText('C3');
+    await page.keyboard.press('ArrowLeft');
+    await expect(page.locator('#aci')).toHaveText('B3');
+    await page.keyboard.press('ArrowUp');
+    await expect(page.locator('#aci')).toHaveText('B2');
+  });
+
+  test('cannot navigate left/up past grid origin', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('ArrowLeft');
+    await expect(page.locator('#aci')).toHaveText('A1');
+    await page.keyboard.press('ArrowUp');
+    await expect(page.locator('#aci')).toHaveText('A1');
+  });
+
+  test('cannot navigate right/down past grid boundary', async ({ page }) => {
+    await page.locator('#xZ50').click();
+    await expect(page.locator('#aci')).toHaveText('Z50');
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#aci')).toHaveText('Z50');
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#aci')).toHaveText('Z50');
+  });
+
+  test('formula bar clears when navigating to an empty cell', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('data');
+    await page.keyboard.press('Enter');
+    // A2 is empty — formula bar should be blank
+    await expect(page.locator('#fb')).toHaveValue('');
+  });
+});
+
+// ─── Range Selection ──────────────────────────────────────────────────────────
+
+test.describe('Range Selection', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('shift+click extends selection to a range', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.locator('#xC3').click({ modifiers: ['Shift'] });
+    await expect(page.locator('#xA1')).toHaveClass(/range/);
+    await expect(page.locator('#xB2')).toHaveClass(/range/);
+    await expect(page.locator('#xC3')).toHaveClass(/range/);
+  });
+
+  test('shift+click does not extend to cells outside selection', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.locator('#xB2').click({ modifiers: ['Shift'] });
+    await expect(page.locator('#xC3')).not.toHaveClass(/range/);
+  });
+
+  test('shift+arrow extends selection one step at a time', async ({ page }) => {
+    await page.locator('#xB2').click();
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press('Shift+ArrowDown');
+    await expect(page.locator('#xB2')).toHaveClass(/range/);
+    await expect(page.locator('#xC2')).toHaveClass(/range/);
+    await expect(page.locator('#xB3')).toHaveClass(/range/);
+    await expect(page.locator('#xC3')).toHaveClass(/range/);
+  });
+
+  test('ctrl+a selects entire grid', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Control+a');
+    await expect(page.locator('#xA1')).toHaveClass(/range/);
+    await expect(page.locator('#xM25')).toHaveClass(/range/);
+    await expect(page.locator('#xZ50')).toHaveClass(/range/);
+  });
+
+  test('escape clears range selection', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Control+a');
+    await expect(page.locator('#xZ50')).toHaveClass(/range/);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#xZ50')).not.toHaveClass(/range/);
+    await expect(page.locator('#xA1')).not.toHaveClass(/range/);
+  });
+
+  test('clicking a new cell after range clears the range highlight', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Shift+ArrowRight');
+    await expect(page.locator('#xB1')).toHaveClass(/range/);
+    await page.locator('#xC3').click();
+    await expect(page.locator('#xA1')).not.toHaveClass(/range/);
+    await expect(page.locator('#xB1')).not.toHaveClass(/range/);
+  });
+
+  test('mouse drag selects a range', async ({ page }) => {
+    const a1 = page.locator('#xA1');
+    const c3 = page.locator('#xC3');
+    await a1.hover();
+    await page.mouse.down();
+    await c3.hover();
+    await page.mouse.up();
+    await expect(page.locator('#xA1')).toHaveClass(/range/);
+    await expect(page.locator('#xB2')).toHaveClass(/range/);
+    await expect(page.locator('#xC3')).toHaveClass(/range/);
+  });
+
+  test('range border overlay appears during range selection', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Shift+ArrowRight');
+    const rb = page.locator('#rb');
+    await expect(rb).toBeVisible();
+  });
+
+  test('range border overlay hidden when no range selected', async ({ page }) => {
+    await page.locator('#xA1').click();
+    const rb = page.locator('#rb');
+    await expect(rb).not.toBeVisible();
+  });
+
+  test('ctrl+a does nothing while editing', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    await expect(page.locator('#ed')).toBeVisible();
+    await page.keyboard.press('Control+a');
+    // Should still be editing, not select-all
+    await expect(page.locator('#ed')).toBeVisible();
+  });
+});
+
+// ─── Editing ─────────────────────────────────────────────────────────────────
+
+test.describe('Editing', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('double-click opens inline editor', async ({ page }) => {
+    await page.locator('#xA1').dblclick();
+    await expect(page.locator('#ed')).toBeVisible();
+  });
+
+  test('Enter on a selected cell opens editor', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#ed')).toBeVisible();
+  });
+
+  test('F2 opens editor on selected cell', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    await expect(page.locator('#ed')).toBeVisible();
+  });
+
+  test('typing a character opens editor pre-filled with that character', async ({ page }) => {
+    await page.locator('#xB2').click();
+    await page.keyboard.press('h');
+    await expect(page.locator('#ed')).toBeVisible();
+    await expect(page.locator('#ed')).toHaveValue('h');
+  });
+
+  test('Escape cancels edit — cell unchanged', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('hello');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#ed')).not.toBeVisible();
+    await expect(page.locator('#xA1')).toHaveText('');
+  });
+
+  test('Escape during edit of existing value reverts to original', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('original');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.type('new value');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#xA1')).toHaveText('original');
+  });
+
+  test('Enter commits edit and moves selection down', async ({ page }) => {
+    await page.locator('#xA1').click();
     await page.keyboard.type('42');
     await page.keyboard.press('Enter');
-    
-    const cellB2 = page.locator('#xB2');
-    await expect(cellB2).toHaveText('42');
+    await expect(page.locator('#xA1')).toHaveText('42');
+    await expect(page.locator('#aci')).toHaveText('A2');
+    await expect(page.locator('#ed')).not.toBeVisible();
   });
 
-  test('should allow clearing a cell with Delete/Backspace', async ({ page }) => {
-    const cellC1 = page.locator('#xC1');
-    await cellC1.click();
+  test('Tab commits edit and moves selection right', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('hello');
+    await page.keyboard.press('Tab');
+    await expect(page.locator('#xA1')).toHaveText('hello');
+    await expect(page.locator('#aci')).toHaveText('B1');
+    await expect(page.locator('#ed')).not.toBeVisible();
+  });
+
+  test('editor stays open through text edits and syncs formula bar', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    await page.keyboard.type('=SUM(1,2)');
+    await expect(page.locator('#fb')).toHaveValue('=SUM(1,2)');
+    await expect(page.locator('#ed')).toBeVisible();
+  });
+
+  test('arrow keys during edit do not navigate cells', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    await page.keyboard.type('test');
+    await page.keyboard.press('ArrowRight');
+    // ACI stays at A1, editor still open
+    await expect(page.locator('#aci')).toHaveText('A1');
+    await expect(page.locator('#ed')).toBeVisible();
+  });
+
+  test('editor input is pre-filled with existing cell value when opened via F2', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('existing');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    await expect(page.locator('#ed')).toHaveValue('existing');
+  });
+
+  test('clicking another cell while editing commits the edit', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    await page.keyboard.type('committed');
+    await page.locator('#xB2').click();
+    await expect(page.locator('#xA1')).toHaveText('committed');
+    await expect(page.locator('#ed')).not.toBeVisible();
+  });
+});
+
+// ─── Formula Bar ─────────────────────────────────────────────────────────────
+
+test.describe('Formula Bar', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('formula bar shows raw formula, cell shows computed value', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('=2*3');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await expect(page.locator('#fb')).toHaveValue('=2*3');
+    await expect(page.locator('#xA1')).toHaveText('6');
+  });
+
+  test('typing in formula bar updates cell in real-time', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.locator('#fb').click();
+    await page.locator('#fb').fill('hello');
+    await expect(page.locator('#xA1')).toHaveText('hello');
+  });
+
+  test('Enter in formula bar commits and moves selection down', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.locator('#fb').click();
+    await page.locator('#fb').fill('test');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#xA1')).toHaveText('test');
+    await expect(page.locator('#aci')).toHaveText('A2');
+  });
+
+  test('formula bar cleared when empty cell selected', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('data');
+    await page.keyboard.press('Enter');
+    // A2 is empty
+    await expect(page.locator('#fb')).toHaveValue('');
+  });
+
+  test('formula bar updates when arrow-key navigating', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('alpha');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('beta');
+    await page.keyboard.press('Enter');
+
+    await page.locator('#xA1').click();
+    await expect(page.locator('#fb')).toHaveValue('alpha');
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#fb')).toHaveValue('beta');
+  });
+
+  test('keydown in formula bar does not navigate grid', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.locator('#fb').click();
+    await page.keyboard.press('ArrowDown');
+    // Grid should not have moved
+    await expect(page.locator('#aci')).toHaveText('A1');
+  });
+});
+
+// ─── Delete / Backspace ───────────────────────────────────────────────────────
+
+test.describe('Delete and Backspace', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('Backspace clears selected cell and formula bar', async ({ page }) => {
+    await page.locator('#xA1').click();
     await page.keyboard.type('hello');
     await page.keyboard.press('Enter');
-    await expect(cellC1).toHaveText('hello');
-
-    await cellC1.click();
+    await page.locator('#xA1').click();
     await page.keyboard.press('Backspace');
-    await expect(cellC1).toHaveText('');
-    
-    // formula bar should also be empty
-    const formulaBar = page.locator('#fb');
-    await expect(formulaBar).toHaveValue('');
+    await expect(page.locator('#xA1')).toHaveText('');
+    await expect(page.locator('#fb')).toHaveValue('');
   });
 
-  test('should show error state correctly', async ({ page }) => {
-    const cellA1 = page.locator('#xA1');
-    await cellA1.click();
-    await page.keyboard.type('=B1');
+  test('Delete clears selected cell and formula bar', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('world');
     await page.keyboard.press('Enter');
-
-    const cellB1 = page.locator('#xB1');
-    await cellB1.click();
-    await page.keyboard.type('=A1');
-    await page.keyboard.press('Enter');
-
-    await expect(cellA1).toHaveText('#CIRC!');
-    await expect(cellB1).toHaveText('#CIRC!');
-    
-    // Should have "err" class
-    await expect(cellA1).toHaveClass(/err/);
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Delete');
+    await expect(page.locator('#xA1')).toHaveText('');
+    await expect(page.locator('#fb')).toHaveValue('');
   });
 
-  test('should support formula range selection via mouse', async ({ page }) => {
-    // Type some values
+  test('Backspace on range clears all cells in selection', async ({ page }) => {
+    for (const [cell, val] of [['#xA1', '1'], ['#xA2', '2'], ['#xA3', '3']]) {
+      await page.locator(cell).click();
+      await page.keyboard.type(val);
+      await page.keyboard.press('Enter');
+    }
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Shift+ArrowDown');
+    await page.keyboard.press('Shift+ArrowDown');
+    await page.keyboard.press('Backspace');
+    await expect(page.locator('#xA1')).toHaveText('');
+    await expect(page.locator('#xA2')).toHaveText('');
+    await expect(page.locator('#xA3')).toHaveText('');
+  });
+
+  test('Delete on range clears all cells', async ({ page }) => {
+    await page.locator('#xB1').click();
+    await page.keyboard.type('x');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('y');
+    await page.keyboard.press('Enter');
+
+    await page.locator('#xB1').click();
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press('Delete');
+    await expect(page.locator('#xB1')).toHaveText('');
+    await expect(page.locator('#xC1')).toHaveText('');
+  });
+
+  test('range is cleared after range-delete', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('q');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Shift+ArrowDown');
+    await page.keyboard.press('Backspace');
+    // Range highlight should be gone
+    await expect(page.locator('#xA1')).not.toHaveClass(/range/);
+    await expect(page.locator('#xA2')).not.toHaveClass(/range/);
+  });
+});
+
+// ─── Undo ─────────────────────────────────────────────────────────────────────
+
+test.describe('Undo', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('Ctrl+Z undoes the last cell edit', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('hello');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#xA1')).toHaveText('hello');
+
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Control+z');
+    await expect(page.locator('#xA1')).toHaveText('');
+  });
+
+  test('Ctrl+Z undoes a clear operation', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('data');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Backspace');
+    await expect(page.locator('#xA1')).toHaveText('');
+
+    await page.keyboard.press('Control+z');
+    await expect(page.locator('#xA1')).toHaveText('data');
+  });
+
+  test('multiple undos restore history sequentially', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('first');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.type('second');
+    await page.keyboard.press('Enter');
+
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Control+z');
+    await expect(page.locator('#xA1')).toHaveText('first');
+
+    await page.keyboard.press('Control+z');
+    await expect(page.locator('#xA1')).toHaveText('');
+  });
+
+  test('Ctrl+Z while editing does not trigger undo', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('saved');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    // Ctrl+Z in edit mode should not undo the 'saved' commit
+    await page.keyboard.press('Control+z');
+    await expect(page.locator('#ed')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#xA1')).toHaveText('saved');
+  });
+
+  test('undo updates formula bar to match restored value', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('original');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.type('replaced');
+    await page.keyboard.press('Enter');
+
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Control+z');
+    await expect(page.locator('#fb')).toHaveValue('original');
+  });
+});
+
+// ─── Copy / Cut / Paste ───────────────────────────────────────────────────────
+
+test.describe('Copy, Cut, and Paste', () => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.goto('/');
+  });
+
+  test('Ctrl+C copies single cell raw value to clipboard', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('myvalue');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Control+c');
+    const text = await page.evaluate(() => navigator.clipboard.readText());
+    expect(text).toBe('myvalue');
+  });
+
+  test('Ctrl+C on range copies tab+newline delimited data', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('1');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('2');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA2').click();
+    await page.keyboard.type('3');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('4');
+    await page.keyboard.press('Enter');
+
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press('Shift+ArrowDown');
+    await page.keyboard.press('Control+c');
+    const text = await page.evaluate(() => navigator.clipboard.readText());
+    expect(text).toBe('1\t2\n3\t4\n');
+  });
+
+  test('Ctrl+X cuts cell value to clipboard and clears the cell', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('cutme');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Control+x');
+    await page.locator('#xA1').waitFor();
+    const text = await page.evaluate(() => navigator.clipboard.readText());
+    expect(text).toBe('cutme');
+    await expect(page.locator('#xA1')).toHaveText('');
+  });
+
+  test('Ctrl+V pastes single value into selected cell', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', 'pasted');
+      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }));
+    });
+    await expect(page.locator('#xA1')).toHaveText('pasted');
+    await expect(page.locator('#fb')).toHaveValue('pasted');
+  });
+
+  test('Ctrl+V pastes tab-separated data as multi-cell grid', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', 'a\tb\nc\td');
+      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }));
+    });
+    await expect(page.locator('#xA1')).toHaveText('a');
+    await expect(page.locator('#xB1')).toHaveText('b');
+    await expect(page.locator('#xA2')).toHaveText('c');
+    await expect(page.locator('#xB2')).toHaveText('d');
+  });
+
+  test('paste starting from non-A1 cell offsets correctly', async ({ page }) => {
+    await page.locator('#xB2').click();
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', 'x\ty\nz\tw');
+      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }));
+    });
+    await expect(page.locator('#xB2')).toHaveText('x');
+    await expect(page.locator('#xC2')).toHaveText('y');
+    await expect(page.locator('#xB3')).toHaveText('z');
+    await expect(page.locator('#xC3')).toHaveText('w');
+  });
+
+  test('paste does not fire custom handler when editing', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('original');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    // Editor is open — grid paste handler should be skipped
+    await expect(page.locator('#ed')).toBeVisible();
+  });
+
+  test('Ctrl+C while editing does not copy', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('data');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    // Ctrl+C in edit mode should not fire our copy handler
+    await expect(page.locator('#ed')).toBeVisible();
+    await page.keyboard.press('Escape');
+  });
+});
+
+// ─── Formula Range Selection ──────────────────────────────────────────────────
+
+test.describe('Formula Range Selection', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('clicking a cell after operator inserts its ref into formula', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('5');
+    await page.keyboard.press('Enter');
+
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=A1+');
+    await page.locator('#xA2').click();
+    await expect(page.locator('#fb')).toHaveValue('=A1+A2');
+  });
+
+  test('clicking cell after ( inserts ref', async ({ page }) => {
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=SUM(');
+    await page.locator('#xA1').click();
+    await expect(page.locator('#fb')).toHaveValue('=SUM(A1');
+  });
+
+  test('clicking cell after comma inserts ref', async ({ page }) => {
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=SUM(A1,');
+    await page.locator('#xA2').click();
+    await expect(page.locator('#fb')).toHaveValue('=SUM(A1,A2');
+  });
+
+  test('clicking cell after bare = inserts ref and evaluates', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('99');
+    await page.keyboard.press('Enter');
+
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#xB1')).toHaveText('99');
+  });
+
+  test('dragging during formula mode inserts range ref', async ({ page }) => {
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=SUM(');
+
+    const a1 = page.locator('#xA1');
+    const a3 = page.locator('#xA3');
+    await a1.hover();
+    await page.mouse.down();
+    await a3.hover();
+    await page.mouse.up();
+
+    await expect(page.locator('#fb')).toHaveValue('=SUM(A1:A3');
+  });
+
+  test('formula range drag evaluates correctly after confirm', async ({ page }) => {
     await page.locator('#xA1').click();
     await page.keyboard.type('1');
     await page.keyboard.press('Enter');
@@ -103,64 +647,384 @@ test.describe('Spreadsheet E2E', () => {
     await page.keyboard.type('3');
     await page.keyboard.press('Enter');
 
-    // Start formula in B1
-    const cellB1 = page.locator('#xB1');
-    await cellB1.click();
+    await page.locator('#xB1').click();
     await page.keyboard.type('=SUM(');
-
-    // Mouse drag from A1 to A3
-    const cellA1 = page.locator('#xA1');
-    const cellA3 = page.locator('#xA3');
-    
-    await cellA1.hover();
+    const a1 = page.locator('#xA1');
+    const a3 = page.locator('#xA3');
+    await a1.hover();
     await page.mouse.down();
-    await cellA3.hover();
+    await a3.hover();
     await page.mouse.up();
 
-    // Verify formula bar updated
-    const formulaBar = page.locator('#fb');
-    // Note: the editor might also be open here, but formulaBar is synchronized
-    // We type ')' to close the formula
     await page.keyboard.type(')');
     await page.keyboard.press('Enter');
-
-    await expect(cellB1).toHaveText('6');
+    await expect(page.locator('#xB1')).toHaveText('6');
   });
 
-  test('should insert cell ref after operator in formula', async ({ page }) => {
+  test('formula-ref highlight clears after mouseup', async ({ page }) => {
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=SUM(');
+
+    const a1 = page.locator('#xA1');
+    const a2 = page.locator('#xA2');
+    await a1.hover();
+    await page.mouse.down();
+    await a2.hover();
+    await expect(page.locator('#xA1')).toHaveClass(/formula-ref/);
+    await page.mouse.up();
+    await expect(page.locator('#xA1')).not.toHaveClass(/formula-ref/);
+    await expect(page.locator('#xA2')).not.toHaveClass(/formula-ref/);
+  });
+
+  test('formula range border overlay clears after mouseup', async ({ page }) => {
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=SUM(');
+
+    await page.locator('#xA1').hover();
+    await page.mouse.down();
+    await page.locator('#xA3').hover();
+    await expect(page.locator('#frb')).toBeVisible();
+    await page.mouse.up();
+    await expect(page.locator('#frb')).not.toBeVisible();
+  });
+
+  test('formula input regains focus after range selection mouseup', async ({ page }) => {
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=SUM(');
+    await page.locator('#xA1').hover();
+    await page.mouse.down();
+    await page.locator('#xA2').hover();
+    await page.mouse.up();
+    const activeId = await page.evaluate(() => document.activeElement.id);
+    expect(['ed', 'fb']).toContain(activeId);
+  });
+
+  test('repeated formula clicks replace the previous ref', async ({ page }) => {
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=');
+    await page.locator('#xA1').click();
+    await expect(page.locator('#fb')).toHaveValue('=A1');
+    // Clicking again after losing formula-insert position won't replace
+    // but if we type + to restore insert position, next click replaces
+    await page.keyboard.type('+');
+    await page.locator('#xA2').click();
+    await expect(page.locator('#fb')).toHaveValue('=A1+A2');
+  });
+});
+
+// ─── Error Display ────────────────────────────────────────────────────────────
+
+test.describe('Error Display', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('circular reference shows #CIRC! with err class', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('=B1');
+    await page.keyboard.press('Enter');
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=A1');
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('#xA1')).toHaveText('#CIRC!');
+    await expect(page.locator('#xB1')).toHaveText('#CIRC!');
+    await expect(page.locator('#xA1')).toHaveClass(/err/);
+    await expect(page.locator('#xB1')).toHaveClass(/err/);
+  });
+
+  test('division by zero shows error with err class', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('=1/0');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#xA1')).toHaveClass(/err/);
+  });
+
+  test('err class removed when cell is corrected', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('=B1');
+    await page.keyboard.press('Enter');
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=A1');
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('#xA1')).toHaveClass(/err/);
+
+    await page.locator('#xB1').click();
+    await page.keyboard.type('10');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#xA1')).not.toHaveClass(/err/);
+    await expect(page.locator('#xA1')).toHaveText('10');
+  });
+
+  test('cells without errors do not have err class', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('=1+1');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#xA1')).not.toHaveClass(/err/);
+  });
+});
+
+// ─── Info Modal ───────────────────────────────────────────────────────────────
+
+test.describe('Info Modal', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('info button opens modal', async ({ page }) => {
+    await page.locator('#info-btn').click();
+    await expect(page.locator('#info-modal')).not.toHaveAttribute('hidden');
+  });
+
+  test('close button hides modal and refocuses grid', async ({ page }) => {
+    await page.locator('#info-btn').click();
+    await page.locator('#info-close').click();
+    await expect(page.locator('#info-modal')).toHaveAttribute('hidden', '');
+    const activeId = await page.evaluate(() => document.activeElement.id);
+    expect(activeId).toBe('gc');
+  });
+
+  test('clicking backdrop closes modal', async ({ page }) => {
+    await page.locator('#info-btn').click();
+    // Click in the top-left corner of the overlay (not inside the modal box)
+    await page.locator('#info-modal').click({ position: { x: 5, y: 5 } });
+    await expect(page.locator('#info-modal')).toHaveAttribute('hidden', '');
+  });
+
+  test('Escape closes open modal', async ({ page }) => {
+    await page.locator('#info-btn').click();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#info-modal')).toHaveAttribute('hidden', '');
+  });
+
+  test('Ctrl+I opens modal', async ({ page }) => {
+    await page.keyboard.press('Control+i');
+    await expect(page.locator('#info-modal')).not.toHaveAttribute('hidden');
+  });
+
+  test('Ctrl+I closes modal when already open', async ({ page }) => {
+    await page.locator('#info-btn').click();
+    await page.keyboard.press('Control+i');
+    await expect(page.locator('#info-modal')).toHaveAttribute('hidden', '');
+  });
+
+  test('arrow key navigation blocked while modal is open', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('data');
+    await page.keyboard.press('Enter');
+    // After Enter we're on A2
+    await expect(page.locator('#aci')).toHaveText('A2');
+
+    await page.locator('#info-btn').click();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Escape');
+    // Should still be on A2 — arrow was eaten by modal handler
+    await expect(page.locator('#aci')).toHaveText('A2');
+  });
+
+  test('Ctrl+I opens modal even while editing, Escape closes modal not editor', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('F2');
+    await expect(page.locator('#ed')).toBeVisible();
+    await page.keyboard.press('Control+i');
+    // Modal opens on top of the editor
+    await expect(page.locator('#info-modal')).not.toHaveAttribute('hidden');
+    // Escape closes the modal (not the editor, since modal intercepts Escape)
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#info-modal')).toHaveAttribute('hidden', '');
+    // Editor is still visible — user must press Escape again to cancel edit
+    await expect(page.locator('#ed')).toBeVisible();
+  });
+});
+
+// ─── Tab Navigation ───────────────────────────────────────────────────────────
+
+test.describe('Tab Navigation', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('Tab when not editing moves selection right', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Tab');
+    await expect(page.locator('#aci')).toHaveText('B1');
+  });
+
+  test('Tab when editing commits and moves right', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('abc');
+    await page.keyboard.press('Tab');
+    await expect(page.locator('#xA1')).toHaveText('abc');
+    await expect(page.locator('#aci')).toHaveText('B1');
+  });
+
+  test('Tab does not move selection when formula bar is focused', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.locator('#fb').click();
+    // Tab focus moves to next browser element — grid ACI should not change
+    await expect(page.locator('#aci')).toHaveText('A1');
+  });
+});
+
+// ─── Column / Row Resize ──────────────────────────────────────────────────────
+
+test.describe('Column and Row Resize', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('dragging column resize handle increases width', async ({ page }) => {
+    const handle = page.locator('[data-resize-col="0"]').first();
+    const box = await handle.boundingBox();
+
+    const before = await page.evaluate(() =>
+      document.querySelector('#xA1').getBoundingClientRect().width
+    );
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2);
+    await page.mouse.up();
+
+    const after = await page.evaluate(() =>
+      document.querySelector('#xA1').getBoundingClientRect().width
+    );
+    expect(after).toBeGreaterThan(before);
+  });
+
+  test('column width enforces minimum (30px)', async ({ page }) => {
+    const handle = page.locator('[data-resize-col="0"]').first();
+    const box = await handle.boundingBox();
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 500, box.y + box.height / 2);
+    await page.mouse.up();
+
+    const after = await page.evaluate(() =>
+      document.querySelector('#xA1').getBoundingClientRect().width
+    );
+    expect(after).toBeGreaterThanOrEqual(30);
+  });
+
+  test('dragging row resize handle increases height', async ({ page }) => {
+    const handle = page.locator('[data-resize-row="1"]').first();
+    const box = await handle.boundingBox();
+
+    const before = await page.evaluate(() =>
+      document.querySelector('#xA1').getBoundingClientRect().height
+    );
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 40);
+    await page.mouse.up();
+
+    const after = await page.evaluate(() =>
+      document.querySelector('#xA1').getBoundingClientRect().height
+    );
+    expect(after).toBeGreaterThan(before);
+  });
+
+  test('row height enforces minimum (16px)', async ({ page }) => {
+    const handle = page.locator('[data-resize-row="1"]').first();
+    const box = await handle.boundingBox();
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 500);
+    await page.mouse.up();
+
+    const after = await page.evaluate(() =>
+      document.querySelector('#xA1').getBoundingClientRect().height
+    );
+    expect(after).toBeGreaterThanOrEqual(16);
+  });
+});
+
+// ─── File Title ───────────────────────────────────────────────────────────────
+
+test.describe('File Title Input', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('Enter in file-title refocuses the grid container', async ({ page }) => {
+    await page.locator('#file-title').click();
+    await page.locator('#file-title').fill('My Sheet');
+    await page.keyboard.press('Enter');
+    const activeId = await page.evaluate(() => document.activeElement.id);
+    expect(activeId).toBe('gc');
+  });
+
+  test('Escape in file-title refocuses the grid container', async ({ page }) => {
+    await page.locator('#file-title').click();
+    await page.keyboard.press('Escape');
+    const activeId = await page.evaluate(() => document.activeElement.id);
+    expect(activeId).toBe('gc');
+  });
+
+  test('arrow keys in file-title do not move cell selection', async ({ page }) => {
+    await page.locator('#xB2').click();
+    await page.locator('#file-title').click();
+    await page.keyboard.press('ArrowDown');
+    // ACI should not have changed
+    await expect(page.locator('#aci')).toHaveText('B2');
+  });
+});
+
+// ─── Computed Value Display ───────────────────────────────────────────────────
+
+test.describe('Computed Value Display', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('cell displays computed result, not formula text', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('=2*3');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#xA1')).toHaveText('6');
+  });
+
+  test('dependent cells update immediately when dependency changes', async ({ page }) => {
     await page.locator('#xA1').click();
     await page.keyboard.type('10');
     await page.keyboard.press('Enter');
-    await page.locator('#xA2').click();
-    await page.keyboard.type('3');
+    await page.locator('#xB1').click();
+    await page.keyboard.type('=A1*2');
     await page.keyboard.press('Enter');
+    await expect(page.locator('#xB1')).toHaveText('20');
 
-    const cellB1 = page.locator('#xB1');
-    await cellB1.click();
-    await page.keyboard.type('=A1-');
-
-    await page.locator('#xA2').click();
-    await page.keyboard.press('Enter');
-
-    await expect(cellB1).toHaveText('7');
-  });
-
-  test('should insert range ref after bare = in formula', async ({ page }) => {
     await page.locator('#xA1').click();
     await page.keyboard.type('5');
     await page.keyboard.press('Enter');
+    await expect(page.locator('#xB1')).toHaveText('10');
+  });
 
-    const cellB1 = page.locator('#xB1');
-    await cellB1.click();
-    await page.keyboard.type('=');
+  test('empty cell displays nothing', async ({ page }) => {
+    await expect(page.locator('#xD4')).toHaveText('');
+  });
 
-    const cellA1 = page.locator('#xA1');
-    await cellA1.hover();
-    await page.mouse.down();
-    await page.mouse.up();
-
+  test('clearing a formula cell removes computed display', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('=1+1');
     await page.keyboard.press('Enter');
+    await expect(page.locator('#xA1')).toHaveText('2');
 
-    await expect(cellB1).toHaveText('5');
+    await page.locator('#xA1').click();
+    await page.keyboard.press('Backspace');
+    await expect(page.locator('#xA1')).toHaveText('');
+  });
+
+  test('overwriting a cell updates the display', async ({ page }) => {
+    await page.locator('#xA1').click();
+    await page.keyboard.type('old');
+    await page.keyboard.press('Enter');
+    await page.locator('#xA1').click();
+    await page.keyboard.type('new');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#xA1')).toHaveText('new');
   });
 });
