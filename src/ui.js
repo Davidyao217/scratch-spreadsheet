@@ -15,7 +15,8 @@ export function initUI(engine) {
   let sel = { anchor: { col: 0, row: 1 }, cursor: { col: 0, row: 1 } };
 
   // ─── Edit state ────────────────────────────────────────────────────────────
-  let editing = false;
+  let editState = 'GRID_NAVIGATION'; // 'GRID_NAVIGATION' | 'QUICK_ENTRY' | 'DEEP_EDIT'
+  let isCaretPristine = false;
   let fbPushed = false;
 
   // ─── Formula range state (null when inactive) ──────────────────────────────
@@ -167,26 +168,38 @@ export function initUI(engine) {
     const val = initial !== undefined ? initial : (engine.getData()[anchorId] ?? '');
     editor.value = val;
     fb.value = val;
-    editing = true;
+    if (initial !== undefined) {
+      editState = 'QUICK_ENTRY';
+      isCaretPristine = true;
+    } else {
+      editState = 'DEEP_EDIT';
+      isCaretPristine = false;
+    }
     editor.focus();
     editor.setSelectionRange(editor.value.length, editor.value.length);
   }
 
   function commitEdit() {
-    if (!editing) return;
+    if (editState === 'GRID_NAVIGATION') return;
+    clearFormulaRange();
+    formulaRange = null;
     const anchorId = mid(sel.anchor.col, sel.anchor.row);
     engine.pushHistory();
     engine.setCell(anchorId, editor.value);
     editor.style.display = 'none';
-    editing = false;
+    editState = 'GRID_NAVIGATION';
+    isCaretPristine = false;
     gc.focus();
   }
 
   function cancelEdit() {
-    if (!editing) return;
+    if (editState === 'GRID_NAVIGATION') return;
+    clearFormulaRange();
+    formulaRange = null;
     const anchorId = mid(sel.anchor.col, sel.anchor.row);
     editor.style.display = 'none';
-    editing = false;
+    editState = 'GRID_NAVIGATION';
+    isCaretPristine = false;
     gc.focus();
     fb.value = engine.getData()[anchorId] ?? '';
   }
@@ -228,7 +241,7 @@ export function initUI(engine) {
     const cur = insertPos + ref.length;
     input.setSelectionRange(cur, cur);
     if (input === editor) fb.value = newVal;
-    else if (input === fb && editing) editor.value = newVal;
+    else if (input === fb && editState !== 'GRID_NAVIGATION') editor.value = newVal;
   }
 
   // ─── Engine subscriber ─────────────────────────────────────────────────────
@@ -251,7 +264,7 @@ export function initUI(engine) {
     }
 
     if (k === 'c') {
-      if (editing) return false;
+      if (editState !== 'GRID_NAVIGATION') return false;
       e.preventDefault();
       const isRange = sel.anchor.col !== sel.cursor.col || sel.anchor.row !== sel.cursor.row;
       const { c1, c2, r1, r2 } = getSelectionBounds();
@@ -263,7 +276,7 @@ export function initUI(engine) {
     }
 
     if (k === 'x') {
-      if (editing) return false;
+      if (editState !== 'GRID_NAVIGATION') return false;
       e.preventDefault();
       const isRange = sel.anchor.col !== sel.cursor.col || sel.anchor.row !== sel.cursor.row;
       const { c1, c2, r1, r2 } = getSelectionBounds();
@@ -281,14 +294,14 @@ export function initUI(engine) {
     }
 
     if (k === 'z') {
-      if (editing) return false;
+      if (editState !== 'GRID_NAVIGATION') return false;
       e.preventDefault();
       if (engine.undo()) fb.value = engine.getData()[mid(sel.anchor.col, sel.anchor.row)] ?? '';
       return true;
     }
 
     if (k === 'a') {
-      if (editing) return false;
+      if (editState !== 'GRID_NAVIGATION') return false;
       e.preventDefault();
       setSelection({ col: 0, row: 1 }, { col: COLS - 1, row: ROWS });
       return true;
@@ -333,7 +346,7 @@ export function initUI(engine) {
     if (!t) return;
     const [c, r] = parseId(t.id.slice(1));
 
-    const activeInput = editing ? editor : (document.activeElement === fb ? fb : null);
+    const activeInput = editState !== 'GRID_NAVIGATION' ? editor : (document.activeElement === fb ? fb : null);
     if (activeInput && isFormulaInsertPosition(activeInput)) {
       e.preventDefault();
       formulaRange = {
@@ -341,13 +354,14 @@ export function initUI(engine) {
         insertPos: activeInput.selectionStart,
         prevRefLen: 0,
         anchor: { col: c, row: r },
+        cursor: { col: c, row: r },
       };
       insertFormulaRef(mid(c, r));
       renderFormulaRange({ col: c, row: r }, { col: c, row: r });
       return;
     }
 
-    if (editing) commitEdit();
+    if (editState !== 'GRID_NAVIGATION') commitEdit();
     if (e.shiftKey) {
       setSelection(sel.anchor, { col: c, row: r });
     } else {
@@ -371,6 +385,7 @@ export function initUI(engine) {
       const t = document.elementFromPoint(e.clientX, e.clientY)?.closest('.cv');
       if (!t) return;
       const [c, r] = parseId(t.id.slice(1));
+      formulaRange.cursor = { col: c, row: r };
       insertFormulaRef(rangeRef(formulaRange.anchor, { col: c, row: r }));
       renderFormulaRange(formulaRange.anchor, { col: c, row: r });
       return;
@@ -407,6 +422,7 @@ export function initUI(engine) {
   });
 
   document.addEventListener('keydown', e => {
+    if (e.isComposing) return;
     if (!infoModal.hidden) {
       if (e.key === 'Escape') { infoModal.hidden = true; gc.focus(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') { e.preventDefault(); infoModal.hidden = true; gc.focus(); }
@@ -419,7 +435,10 @@ export function initUI(engine) {
     if ((e.ctrlKey || e.metaKey) && handleHotkey(e)) return;
 
     if (k === 'Backspace' || k === 'Delete') {
-      if (editing) return;
+      if (editState !== 'GRID_NAVIGATION') {
+        if (formulaRange !== null) { clearFormulaRange(); formulaRange = null; }
+        return;
+      }
       e.preventDefault();
       engine.pushHistory();
       const { c1, c2, r1, r2 } = getSelectionBounds();
@@ -431,18 +450,68 @@ export function initUI(engine) {
     }
 
     if (ARROW_DELTA[k]) {
-      if (editing) return;
-      e.preventDefault();
       const [dc, dr] = ARROW_DELTA[k];
-      if (e.shiftKey) {
-        setSelection(sel.anchor, { col: sel.cursor.col + dc, row: sel.cursor.row + dr });
-      } else {
-        setSelection({ col: sel.anchor.col + dc, row: sel.anchor.row + dr });
+
+      if (editState === 'GRID_NAVIGATION') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          setSelection(sel.anchor, { col: sel.cursor.col + dc, row: sel.cursor.row + dr });
+        } else {
+          setSelection({ col: sel.anchor.col + dc, row: sel.anchor.row + dr });
+        }
+        return;
       }
+
+      // Formula pointing: continue if already pointing, or start if at a formula-insert position
+      if (formulaRange !== null || isFormulaInsertPosition(editor)) {
+        e.preventDefault();
+        if (formulaRange === null) {
+          let fAnchor, fCursor;
+          if (e.shiftKey) {
+            fAnchor = { col: sel.anchor.col, row: sel.anchor.row };
+            fCursor = { col: clampCol(sel.anchor.col + dc), row: clampRow(sel.anchor.row + dr) };
+          } else {
+            fAnchor = { col: clampCol(sel.anchor.col + dc), row: clampRow(sel.anchor.row + dr) };
+            fCursor = { ...fAnchor };
+          }
+          formulaRange = { input: editor, insertPos: editor.selectionStart, prevRefLen: 0, anchor: fAnchor, cursor: fCursor };
+        } else {
+          if (e.shiftKey) {
+            formulaRange.cursor = { col: clampCol(formulaRange.cursor.col + dc), row: clampRow(formulaRange.cursor.row + dr) };
+          } else {
+            const next = { col: clampCol(formulaRange.anchor.col + dc), row: clampRow(formulaRange.anchor.row + dr) };
+            formulaRange.anchor = next;
+            formulaRange.cursor = next;
+          }
+        }
+        const ref = rangeRef(formulaRange.anchor, formulaRange.cursor);
+        insertFormulaRef(ref);
+        renderFormulaRange(formulaRange.anchor, formulaRange.cursor);
+        return;
+      }
+
+      if (e.shiftKey) {
+        isCaretPristine = false;
+        return;
+      }
+
+      if (editState === 'QUICK_ENTRY' && isCaretPristine) {
+        e.preventDefault();
+        const { col, row } = sel.anchor;
+        commitEdit();
+        setSelection({ col: col + dc, row: row + dr });
+        return;
+      }
+
+      isCaretPristine = false;
       return;
     }
 
-    if (editing) {
+    if (editState !== 'GRID_NAVIGATION') {
+      if (formulaRange !== null && k !== 'Shift' && k !== 'Control' && k !== 'Meta' && k !== 'Alt') {
+        clearFormulaRange();
+        formulaRange = null;
+      }
       if (k === 'Enter') {
         e.preventDefault();
         const { col, row } = sel.anchor;
@@ -479,7 +548,7 @@ export function initUI(engine) {
   });
 
   document.addEventListener('paste', e => {
-    if (editing || document.activeElement === fb || document.activeElement === editor || document.activeElement.id === 'file-title') return;
+    if (editState !== 'GRID_NAVIGATION' || document.activeElement === fb || document.activeElement === editor || document.activeElement.id === 'file-title') return;
     e.preventDefault();
     const text = (e.clipboardData || window.clipboardData).getData('text');
     if (!text) return;
@@ -503,6 +572,14 @@ export function initUI(engine) {
   });
 
   editor.addEventListener('input', e => { fb.value = e.target.value; });
+
+  document.addEventListener('selectionchange', () => {
+    if (editState === 'QUICK_ENTRY' && document.activeElement === editor) {
+      const atEnd = editor.selectionStart === editor.value.length
+                    && editor.selectionEnd === editor.value.length;
+      if (!atEnd) isCaretPristine = false;
+    }
+  });
 
   fb.addEventListener('focus', () => { fbPushed = false; });
   fb.addEventListener('input', e => {
